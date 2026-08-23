@@ -280,7 +280,7 @@ async def update_service(service_name: str, update: ServiceUpdate):
     
     # Check service exists
     services = db.get_all_services()
-    service = next((s for s in services if s['name'] == service_name), None)
+    service = next((s for s in services if s.name == service_name), None)
     if not service:
         raise HTTPException(404, f"Service '{service_name}' not found")
     
@@ -288,11 +288,20 @@ async def update_service(service_name: str, update: ServiceUpdate):
     
     # Update ports if provided
     if update.ports is not None:
-        old_ports = [int(p) for p in service['ports'].split(',')]
+        old_ports = service.ports
         if set(old_ports) != set(update.ports):
             # Recreate chains with new ports
             try:
-                iptables.cleanup_chain(service_name, old_ports)
+                iptables.cleanup_chain(service_name)
+                iptables.setup_chain(service_name, update.ports, service.protocols)
+            except Exception as e:
+                raise HTTPException(500, f"Failed to update iptables: {str(e)}")
+        
+        db.conn.execute(
+            'UPDATE services SET ports = ? WHERE name = ?',
+            (json.dumps(update.ports), service_name)
+        )
+        updates['ports'] = update.ports
                 iptables.setup_chain(service_name, update.ports)
                 updates['ports'] = ','.join(map(str, update.ports))
             except Exception as e:
