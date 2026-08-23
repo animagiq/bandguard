@@ -194,12 +194,12 @@ class Database:
         self.conn.commit()
     
     def add_traffic_record(self, service_id: int, bytes_in: int, bytes_out: int):
-        """添加流量记录"""
+        """添加流量记录（只记录出站流量）"""
         self.conn.execute(
             '''INSERT INTO traffic_stats 
                (service_id, bytes_in, bytes_out) 
                VALUES (?, ?, ?)''',
-            (service_id, bytes_in, bytes_out)
+            (service_id, 0, bytes_out)  # bytes_in 强制为 0
         )
         self.conn.commit()
     

@@ -166,7 +166,7 @@ def status():
     )
     vultr_row = cursor.fetchone()
     if vultr_row:
-        vultr_total = (vultr_row['total_bytes_in'] + vultr_row['total_bytes_out']) / (1024 ** 3)
+        vultr_total = vultr_row['total_bytes_out'] / (1024 ** 3)  # 只统计出站
         diff_gb = vultr_total - total_used_gb
         diff_pct = (diff_gb / vultr_total * 100) if vultr_total > 0 else 0
 

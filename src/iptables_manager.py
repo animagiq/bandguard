@@ -101,8 +101,8 @@ class IptablesManager:
         if protocols in ('udp', 'both'):
             proto_list.append('udp')
         
+        # 只统计出站流量（Vultr 只计费出站）
         for direction, builtin_chain, match_flag in (
-            ('IN', 'INPUT', '--dport'),
             ('OUT', 'OUTPUT', '--sport'),
         ):
             chain_name = f'TRAFFIC_{service_name.upper()}_{direction}'
@@ -136,7 +136,8 @@ class IptablesManager:
             {'bytes_in': int, 'bytes_out': int}
         """
         counters: Dict[str, int] = {'bytes_in': 0, 'bytes_out': 0}
-        for suffix, key in (('IN', 'bytes_in'), ('OUT', 'bytes_out')):
+        # 只读取出站计数器
+        for suffix, key in (('OUT', 'bytes_out'),):
             chain_name = f'TRAFFIC_{service_name.upper()}_{suffix}'
             for backend in BACKENDS:
                 if not self._backend_chain_exists(backend, chain_name):

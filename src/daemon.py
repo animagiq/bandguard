@@ -133,11 +133,11 @@ class TrafficMonitor:
         """
         for service in self.db.get_all_services():
             try:
-                # 读取 iptables 计数器
+                # 读取 iptables 计数器（只有出站）
                 counter = self.iptables.read_counter(service.name)
-                current_in = counter['bytes_in']
+                current_in = 0  # 入站固定为 0
                 current_out = counter['bytes_out']
-                current = current_in + current_out
+                current = current_out  # 总量 = 出站
 
                 last = self.last_counters.get(service.name)
                 if last is None:
@@ -149,12 +149,12 @@ class TrafficMonitor:
                     }
                     continue
 
-                delta_in = current_in - last['in']
+                delta_in = 0  # 入站增量固定为 0
                 delta_out = current_out - last['out']
-                total_delta = current - last['total']
+                total_delta = delta_out  # 总增量 = 出站增量
 
-                # 计数器重置检测：任一方向减小即视为重置（重启/链重建）
-                if delta_in < 0 or delta_out < 0 or total_delta < 0:
+                # 计数器重置检测：出站减小即视为重置
+                if delta_out < 0 or total_delta < 0:
                     print(
                         f"检测到 {service.name} 计数器重置，"
                         "本周期不记录增量，重新建立基线"
@@ -167,9 +167,9 @@ class TrafficMonitor:
                     continue
 
                 if total_delta > 0:
-                    # 记录本间隔增量（非累计值）
+                    # 记录本间隔增量（只记录出站）
                     self.db.add_traffic_record(
-                        service.id, delta_in, delta_out
+                        service.id, 0, delta_out  # bytes_in 固定为 0
                     )
                     self.db.update_period_usage(service.id, total_delta)
 
