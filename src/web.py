@@ -70,7 +70,7 @@ async def dashboard(request: Request):
 async def get_status():
     """Get overall system status and all services."""
     db = get_db()
-    config = db.get_config()
+    config = db.get_all_config()
     
     # Check if initialized
     initialized = config.get('initialized') == '1'
@@ -135,7 +135,7 @@ async def get_status():
 async def get_config():
     """Get global configuration (with secrets masked)."""
     db = get_db()
-    config = db.get_config()
+    config = db.get_all_config()
     
     # Mask sensitive values
     masked_config = {}
@@ -163,7 +163,7 @@ async def update_config(config: GlobalConfig):
         db.set_config(key, str(value))
     
     # Mark as initialized if not already
-    current_config = db.get_config()
+    current_config = db.get_all_config()
     if current_config.get('initialized') != '1':
         db.set_config('initialized', '1')
     
@@ -187,7 +187,7 @@ async def create_service(service: ServiceCreate):
         raise HTTPException(400, f"Service '{service.name}' already exists")
     
     # Add to database
-    config = db.get_config()
+    config = db.get_all_config()
     reset_day = int(config.get('reset_day', 1))
     quota_bytes = service.quota * (1024**3)
     
