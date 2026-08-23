@@ -92,7 +92,7 @@ async def get_status():
         usage = db.get_period_usage(service.id)
         if usage:
             quota_gb = service.quota_bytes / (1024**3)
-            used_gb = usage['bytes_total'] / (1024**3)
+            used_gb = usage.total_bytes / (1024**3)
             percentage = (used_gb / quota_gb * 100) if quota_gb > 0 else 0
             
             services_data.append({
@@ -101,13 +101,13 @@ async def get_status():
                 "protocols": [service.protocols] if isinstance(service.protocols, str) else service.protocols,
                 "quota_gb": round(quota_gb, 1),
                 "used_gb": round(used_gb, 1),
-                "in_gb": round(usage['bytes_in'] / (1024**3), 1),
-                "out_gb": round(usage['bytes_out'] / (1024**3), 1),
+                "in_gb": 0,  # TODO: calculate from traffic_stats
+                "out_gb": 0,  # TODO: calculate from traffic_stats
                 "percentage": round(percentage, 1),
-                "is_blocked": usage['is_blocked'] == 1,
-                "period_start": usage['period_start'],
-                "period_end": usage['period_end'],
-                "last_alert": usage.get('last_alert_level')
+                "is_blocked": usage.is_blocked,
+                "period_start": usage.period_start,
+                "period_end": usage.period_end,
+                "last_alert": None
             })
             
             total_usage += used_gb
