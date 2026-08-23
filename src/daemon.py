@@ -13,7 +13,7 @@ from src.vultr_api import VultrAPIClient
 class TrafficMonitor:
     """流量监控守护进程"""
 
-    def __init__(self, db_path: str = '/data/traffic_monitor.db'):
+    def __init__(self, db_path: str = '/data/traffic.db'):
         self.db = Database(db_path)
         self.iptables = IptablesManager()
         self.alerter = Alerter(self.db.get_config)
