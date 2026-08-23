@@ -407,6 +407,7 @@
         <div style="display: flex; gap: 1rem; align-items: center;">
             <div class="reset-info" id="resetInfo">加载中...</div>
             <div class="reset-info" id="vultrStats" style="display: none; color: var(--text-dim);"></div>
+            <button onclick="syncVultrNow()" id="syncVultrBtn" style="padding: 0.5rem 1rem; font-size: 0.875rem;">🔄 同步</button>
             <button onclick="showConfigModal()" style="padding: 0.5rem 1rem; font-size: 0.875rem;">⚙️ 设置</button>
         </div>
     </div>
@@ -785,6 +786,30 @@
             } else {
                 input.type = 'password';
                 button.textContent = '👁️';  // eye
+            }
+        }
+
+        async function syncVultrNow() {
+            const btn = document.getElementById('syncVultrBtn');
+            btn.disabled = true;
+            btn.textContent = '⏳ 同步中...';
+            
+            try {
+                const res = await fetch('/api/sync-vultr', { method: 'POST' });
+                const data = await res.json();
+                
+                if (res.ok) {
+                    // 立即刷新状态
+                    await loadStatus();
+                    alert('同步成功！');
+                } else {
+                    alert('同步失败: ' + (data.detail || '未知错误'));
+                }
+            } catch (e) {
+                alert('同步失败: ' + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🔄 同步';
             }
         }
     </script>
