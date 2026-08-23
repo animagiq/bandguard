@@ -91,7 +91,7 @@ async def dashboard(request: Request):
 
 @app.get("/api/status")
 async def get_status():
-    """Get overall system status and all services."""
+    """Get overall system status and all services (tree structure)."""
     db = get_db()
     config = db.get_all_config()
     
@@ -102,46 +102,90 @@ async def get_status():
         return JSONResponse({
             "initialized": False,
             "services": [],
+            "tree": [],
             "total_usage": 0,
             "total_quota": 100
         })
     
-    # Get all services with their current period usage
+    # Get tree structure
+    tree = db.get_tree()
+    
+    # Build service data (flat list for backward compat + tree)
     services_data = []
     total_usage = 0
     total_quota = 0
     
-    for service in db.get_all_services():
-        usage = db.get_period_usage(service.id)
-        if usage:
-            quota_gb = service.quota_bytes / (1024**3)
-            used_gb = usage.total_bytes / (1024**3)
+    def process_node(node):
+        """递归处理节点，返回格式化数据"""
+        nonlocal total_usage, total_quota
+        
+        usage = db.get_period_usage(node['id'])
+        if not usage:
+            return None
+        
+        used_gb = usage.total_bytes / (1024**3)
+        
+        if node['is_group']:
+            # 分组节点：汇总子节点
+            children_data = []
+            group_usage = 0
+            group_quota = 0
+            for child in node.get('children', []):
+                child_data = process_node(child)
+                if child_data:
+                    children_data.append(child_data)
+                    group_usage += child_data['used_gb']
+                    group_quota += child_data['quota_gb']
+            
+            return {
+                "name": node['name'],
+                "is_group": True,
+                "used_gb": round(group_usage, 2),
+                "quota_gb": round(group_quota, 1),
+                "percentage": round(group_usage / group_quota * 100, 1) if group_quota > 0 else 0,
+                "children": children_data,
+                "period_start": usage.period_start,
+                "period_end": usage.period_end,
+            }
+        else:
+            # 服务节点
+            quota_gb = node['quota_bytes'] / (1024**3)
             percentage = (used_gb / quota_gb * 100) if quota_gb > 0 else 0
             
-            # 小流量显示 MB，大流量显示 GB
-            if used_gb < 0.01:  # < 10 MB
+            if used_gb < 0.01:
                 used_display = f"{usage.total_bytes / (1024**2):.2f} MB"
             else:
                 used_display = f"{used_gb:.2f} GB"
             
-            services_data.append({
-                "name": service.name,
-                "ports": service.ports,
-                "protocols": [service.protocols] if isinstance(service.protocols, str) else service.protocols,
+            service_data = {
+                "name": node['name'],
+                "is_group": False,
+                "ports": node['ports'],
+                "display_ports": node['display_ports'],
+                "protocols": [node['protocols']] if isinstance(node['protocols'], str) else node['protocols'],
                 "quota_gb": round(quota_gb, 1),
                 "used_gb": round(used_gb, 2),
                 "used_display": used_display,
-                "in_gb": 0,  # TODO: calculate from traffic_stats
-                "out_gb": 0,  # TODO: calculate from traffic_stats
                 "percentage": round(percentage, 1),
                 "is_blocked": usage.is_blocked,
                 "period_start": usage.period_start,
                 "period_end": usage.period_end,
-                "last_alert": None
-            })
+            }
             
+            # Only count leaf nodes toward total
             total_usage += used_gb
             total_quota += quota_gb
+            
+            return service_data
+    
+    # Process tree
+    tree_data = []
+    for node in tree:
+        node_data = process_node(node)
+        if node_data:
+            tree_data.append(node_data)
+            if not node['is_group']:
+                services_data.append(node_data)
     
     # Calculate days until reset
     reset_day = int(config.get('reset_day', 1))
@@ -181,6 +225,7 @@ async def get_status():
     return JSONResponse({
         "initialized": True,
         "services": services_data,
+        "tree": tree_data,
         "total_usage": round(total_usage, 1),
         "total_quota": round(total_quota, 1),
         "total_percentage": round(total_usage / total_quota * 100, 1) if total_quota > 0 else 0,

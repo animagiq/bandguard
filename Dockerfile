@@ -1,7 +1,7 @@
 FROM python:3.11-alpine
 
-# 安装 iptables 和必要工具
-RUN apk add --no-cache iptables ip6tables sqlite
+# 安装 iptables、iproute2 和必要工具
+RUN apk add --no-cache iptables ip6tables sqlite iproute2
 
 # 设置工作目录
 WORKDIR /app
