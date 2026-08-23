@@ -121,9 +121,11 @@ docker exec -it traffic-monitor traffic-ctl init
 pip install -r requirements.txt
 
 # 运行测试
-python tests/test_database.py
-python tests/test_iptables.py  # 需要 root
-python tests/test_alerter.py
+PYTHONPATH=. python3 tests/test_database.py
+PYTHONPATH=. python3 tests/test_iptables.py  # 需要 root
+PYTHONPATH=. python3 tests/test_alerter.py
+PYTHONPATH=. python3 tests/test_daemon.py
+PYTHONPATH=. python3 tests/test_cli.py
 ```
 
 ### 构建镜像
