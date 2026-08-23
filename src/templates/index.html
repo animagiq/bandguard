@@ -490,7 +490,7 @@
     <!-- Add Service Modal -->
     <div id="addServiceModal" class="modal">
         <div class="modal-content">
-            <h2>添加服务</h2>
+            <h2 id="addServiceModalTitle">添加服务</h2>
             <form id="addServiceForm">
                 <div class="form-group">
                     <label for="serviceName">服务名称</label>
@@ -618,7 +618,7 @@
                                 <div class="progress-fill ${fillClass}" style="width: ${Math.min(pct, 100)}%"></div>
                             </div>
                             <div class="service-stats">
-                                <div class="mono">${s.used_gb} / ${s.quota_gb} GB</div>
+                                <div class="mono">${s.used_display || s.used_gb + ' GB'} / ${s.quota_gb} GB</div>
                                 <div>${pct}%</div>
                                 <div>入站: ${s.in_gb} GB</div>
                                 <div>出站: ${s.out_gb} GB</div>
