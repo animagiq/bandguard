@@ -22,6 +22,28 @@ templates = Jinja2Templates(directory="src/templates")
 # Database path from environment or default
 DB_PATH = os.environ.get('DB_PATH', '/data/traffic.db')
 
+
+@app.on_event("startup")
+async def startup_event():
+    """应用启动时初始化 iptables 规则"""
+    try:
+        db = Database(DB_PATH)
+        from src.iptables_manager import IptablesManager
+        ipt = IptablesManager()
+        
+        services = db.get_all_services()
+        if services:
+            print(f"\n启动时设置 {len(services)} 个服务的 iptables 规则")
+            for service in services:
+                try:
+                    ipt.setup_chain(service.name, service.ports, service.protocols)
+                    print(f"  ✓ {service.name}: ports={service.ports}, protocols={service.protocols}")
+                except Exception as e:
+                    print(f"  ✗ {service.name}: {e}")
+    except Exception as e:
+        print(f"启动初始化失败: {e}")
+
+
 # Pydantic models for API requests
 class GlobalConfig(BaseModel):
     vultr_api_key: Optional[str] = None
