@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch: {}
+
+jobs:
+  test:
+    name: 集成测试
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run integration tests
+        # 集成脚本覆盖完整流程：构建镜像 → 启动容器(NET_ADMIN) → init --auto
+        # → CLI config/status → 守护进程 iptables 链 → -S/-D 回程 → 持久化 → 清理。
+        # GitHub 托管 runner 自带 Docker；iptables 操作在容器自身 network
+        # namespace 内进行，不影响宿主。
+        run: sudo ./tests/integration_test.sh
+
+  release:
+    name: 构建发布镜像
+    needs: test
+    # 仅在 tag 推送（v*）时构建发布镜像；手动触发时跳过（无版本号可提取）
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Build Docker image
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          docker build -t vpc-traffic-monitor:${VERSION} .
+          docker tag vpc-traffic-monitor:${VERSION} vpc-traffic-monitor:latest
+
+      # TODO: 配置镜像仓库后在此推送镜像，例如：
+      #   docker push ghcr.io/<owner>/vpc-traffic-monitor:${VERSION}
+      #   docker push ghcr.io/<owner>/vpc-traffic-monitor:latest
+      # （当前无远程仓库，先以本地镜像构建/打标闭环；GitHub Release 资源
+      #   可另加 softprops/action-gh-release 步骤创建，注意 actions/create-release
+      #   已被 GitHub 弃用）
