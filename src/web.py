@@ -117,12 +117,19 @@ async def get_status():
             used_gb = usage.total_bytes / (1024**3)
             percentage = (used_gb / quota_gb * 100) if quota_gb > 0 else 0
             
+            # 小流量显示 MB，大流量显示 GB
+            if used_gb < 0.01:  # < 10 MB
+                used_display = f"{usage.total_bytes / (1024**2):.2f} MB"
+            else:
+                used_display = f"{used_gb:.2f} GB"
+            
             services_data.append({
                 "name": service.name,
                 "ports": service.ports,
                 "protocols": [service.protocols] if isinstance(service.protocols, str) else service.protocols,
                 "quota_gb": round(quota_gb, 1),
-                "used_gb": round(used_gb, 1),
+                "used_gb": round(used_gb, 2),
+                "used_display": used_display,
                 "in_gb": 0,  # TODO: calculate from traffic_stats
                 "out_gb": 0,  # TODO: calculate from traffic_stats
                 "percentage": round(percentage, 1),
