@@ -89,7 +89,8 @@ if docker ps | grep -q traffic-monitor; then
     echo -e "\n${GREEN}✓ 部署成功！${NC}\n"
 
     # 检查是否已初始化
-    INITIALIZED=$(docker exec traffic-monitor traffic-ctl config --get initialized 2>/dev/null || echo "0")
+    INITIALIZED=$(docker exec traffic-monitor traffic-ctl config --get initialized 2>/dev/null | awk '{print $3}' || echo "0")
+    INITIALIZED=${INITIALIZED:-0}
 
     if [ "$INITIALIZED" != "1" ]; then
         echo -e "${YELLOW}首次部署，需要初始化配置：${NC}"
