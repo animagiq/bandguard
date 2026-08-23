@@ -45,7 +45,7 @@ class VultrAPIClient:
             return None
     
     def fetch_bandwidth(self) -> Optional[Dict[str, int]]:
-        """获取当前月份的带宽使用情况
+        """获取当前账户的带宽使用情况（账户级别）
         
         Returns:
             {
@@ -56,22 +56,22 @@ class VultrAPIClient:
             或 None（如果请求失败）
         """
         try:
-            url = f'{self.BASE_URL}/instances/{self.instance_id}/bandwidth'
+            # 使用账户级别带宽 API
+            url = f'{self.BASE_URL}/account/bandwidth'
             resp = requests.get(url, headers=self.headers, timeout=10)
             resp.raise_for_status()
             
             data = resp.json()
-            current_month = datetime.now().strftime('%Y-%m')
             
-            if 'bandwidth' in data and current_month in data['bandwidth']:
-                month_data = data['bandwidth'][current_month]
+            # 返回当前账期的总带宽
+            if 'bandwidth' in data:
+                bw = data['bandwidth']
+                incoming = bw.get('incoming_bytes', 0)
+                outgoing = bw.get('outgoing_bytes', 0)
                 return {
-                    'incoming_bytes': month_data.get('incoming_bytes', 0),
-                    'outgoing_bytes': month_data.get('outgoing_bytes', 0),
-                    'total_bytes': (
-                        month_data.get('incoming_bytes', 0) +
-                        month_data.get('outgoing_bytes', 0)
-                    )
+                    'incoming_bytes': incoming,
+                    'outgoing_bytes': outgoing,
+                    'total_bytes': incoming + outgoing
                 }
             
             return None
