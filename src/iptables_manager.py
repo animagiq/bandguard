@@ -64,13 +64,25 @@ class IptablesManager:
             for backend in BACKENDS
         )
 
-    def setup_chain(self, service_name: str, ports: List[int]):
+    def setup_chain(self, service_name: str, ports: List[int], protocols: str = 'both'):
         """为服务创建流量统计链（幂等，逐后端补齐）
 
         每条方向链在后端上独立检查：即使某次创建中途失败、只存在部分
         规则，再次调用也能补齐缺失的后端链（含其 INPUT/OUTPUT 跳转
         规则），已建成的后端不受影响。
+        
+        Args:
+            service_name: 服务名称
+            ports: 端口列表
+            protocols: 'tcp', 'udp', 或 'both'
         """
+        # Determine which protocols to use
+        proto_list = []
+        if protocols in ('tcp', 'both'):
+            proto_list.append('tcp')
+        if protocols in ('udp', 'both'):
+            proto_list.append('udp')
+        
         for direction, builtin_chain, match_flag in (
             ('IN', 'INPUT', '--dport'),
             ('OUT', 'OUTPUT', '--sport'),
@@ -85,9 +97,9 @@ class IptablesManager:
                 # 创建新链
                 self._run_rule(backend, ['-N', chain_name])
 
-                # 在内建链中插入跳转规则：每个端口 × 每种协议（tcp/udp）
+                # 在内建链中插入跳转规则：每个端口 × 配置的协议
                 for port in ports:
-                    for proto in ('tcp', 'udp'):
+                    for proto in proto_list:
                         self._run_rule(backend, [
                             '-I', builtin_chain,
                             '-p', proto, match_flag, str(port),
