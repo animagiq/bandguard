@@ -1,11 +1,10 @@
 import time
 import signal
 import sys
-import calendar
 from datetime import datetime
 from typing import Dict
 
-from src.database import Database
+from src.database import Database, safe_reset_day, safe_period_end
 from src.iptables_manager import IptablesManager
 from src.alerter import Alerter
 from src.vultr_api import VultrAPIClient
@@ -54,8 +53,23 @@ class TrafficMonitor:
             print(f"设置 iptables 规则: {service.name} -> {service.ports}")
             self.iptables.setup_chain(service.name, service.ports)
 
+        # 重启协调：宿主机重启会清空内核规则表，setup_chain 只重建统计链、
+        # 不会恢复封禁（I2）。按 DB 状态重新协调：已封禁 → 补封禁（幂等）；
+        # 未封禁 → 幂等解封（链上无 REJECT 时为空操作）。
+        for service in self.db.get_all_services():
+            usage = self.db.get_period_usage(service.id)
+            if usage is None:
+                print(f"警告: 服务 {service.name} 缺少 period_usage 记录，跳过重启协调")
+                continue
+            if usage.is_blocked:
+                self.iptables.block_service(service.name)
+                print(f"重启协调: {service.name} 已封禁 → 恢复 REJECT 规则")
+            else:
+                self.iptables.unblock_service(service.name)
+                print(f"重启协调: {service.name} 运行中 → 确保无 REJECT 规则")
+
         self.running = True
-        interval = int(self.db.get_config('monitor_interval') or '60')
+        interval = self._safe_monitor_interval()
         vultr_sync_counter = 0
         period_check_counter = 0
 
@@ -74,10 +88,11 @@ class TrafficMonitor:
                     self.sync_vultr_data()
                     vultr_sync_counter = 0
 
-                # 每 24 小时检查一次周期重置
+                # 每 24 小时检查一次周期重置 + 数据保留清理
                 period_check_counter += 1
                 if period_check_counter >= (86400 / interval):
                     self.check_period_reset()
+                    self.prune_old_data()
                     period_check_counter = 0
 
                 time.sleep(interval)
@@ -206,11 +221,44 @@ class TrafficMonitor:
                 'Quota exceeded, service blocked'
             )
 
+    def _safe_monitor_interval(self):
+        """读取并校验 monitor_interval 配置：非数字 / <=0 回退到 60 并打印警告"""
+        raw = self.db.get_config('monitor_interval') or '60'
+        try:
+            interval = int(raw)
+        except (TypeError, ValueError):
+            print(f"警告: 非法 monitor_interval 配置 '{raw}'，回退到 60 秒")
+            return 60
+        if interval <= 0:
+            print(f"警告: monitor_interval 配置 '{raw}' 无效（应为正整数），回退到 60 秒")
+            return 60
+        return interval
+
+    def prune_old_data(self):
+        """数据保留清理：删除过期统计数据
+
+        保留策略：traffic_stats 保留 ~3 个月（91 天），vultr_stats 与 alerts
+        保留 13 个月。时间窗口用 SQLite datetime 函数表达（UTC，与
+        CURRENT_TIMESTAMP 默认值一致）。
+        """
+        self.db.conn.execute(
+            "DELETE FROM traffic_stats WHERE timestamp < datetime('now', '-91 days')"
+        )
+        self.db.conn.execute(
+            "DELETE FROM vultr_stats WHERE timestamp < datetime('now', '-13 months')"
+        )
+        self.db.conn.execute(
+            "DELETE FROM alerts WHERE triggered_at < datetime('now', '-13 months')"
+        )
+        self.db.conn.commit()
+        print("已清理过期统计数据（traffic_stats 91 天 / vultr_stats、alerts 13 个月）")
+
     def check_period_reset(self, today=None):
         """检查并执行周期重置
 
-        对每个服务：若 today > period_end（周期已结束），将总用量清零、
-        解除封禁并清除告警，同时把周期推进到以 today 为起点的下一周期。
+        对每个服务：若 today >= period_end（周期已结束，含边界当日），将总量
+        清零、解除封禁并清除告警，同时把周期推进到以 today 为起点的下一周期。
+        日历月对齐：period Feb 1 – Mar 1 在 Mar 1 归零，而不是 Mar 2（I3）。
         服务原本处于封禁状态时自动解封。
 
         today 参数用于测试注入固定日期；生产环境默认取当天。
@@ -230,8 +278,8 @@ class TrafficMonitor:
 
                 period_end = datetime.fromisoformat(usage.period_end).date()
 
-                # 仅在超过周期结束日才重置（边界当天不重置）
-                if today <= period_end:
+                # 周期未结束（today < period_end）才跳过；边界当日即重置
+                if today < period_end:
                     continue
 
                 print(f"重置服务周期: {service.name}")
@@ -263,39 +311,12 @@ class TrafficMonitor:
                 print(f"重置 {service.name} 周期失败: {e}")
 
     def _safe_reset_day(self):
-        """读取并校验 reset_day 配置
-
-        非数字 / 0 / 负数等非法值回退到 1 并打印警告，避免 int() 抛异常。
-        """
-        raw = self.db.get_config('reset_day') or '1'
-        try:
-            reset_day = int(raw)
-        except (TypeError, ValueError):
-            print(f"警告: 非法 reset_day 配置 '{raw}'，回退到 1")
-            return 1
-        if reset_day <= 0:
-            print(f"警告: reset_day 配置 '{raw}' 不在有效范围（应为 1-31），回退到 1")
-            return 1
-        return reset_day
+        """读取并校验 reset_day 配置（委托 database.safe_reset_day，避免逻辑漂移）"""
+        return safe_reset_day(self.db.get_config('reset_day'))
 
     def _safe_period_end(self, start_date, reset_day: int):
-        """计算周期结束日期（与 Database._calculate_period_end 语义一致，带天数钳制）
-
-        reset_day 超过目标月份天数时钳制到该月最后一天
-        （如 reset_day=31、目标月为 2 月 → 28/29 日），避免 ValueError。
-        """
-        if start_date.day < reset_day:
-            end_month = start_date.month
-            end_year = start_date.year
-        else:
-            end_month = start_date.month + 1
-            end_year = start_date.year
-            if end_month > 12:
-                end_month = 1
-                end_year += 1
-
-        days_in_month = calendar.monthrange(end_year, end_month)[1]
-        return datetime(end_year, end_month, min(reset_day, days_in_month)).date()
+        """计算周期结束日期（委托 database.safe_period_end，带天数钳制）"""
+        return safe_period_end(start_date, reset_day)
 
     def sync_vultr_data(self):
         """同步 Vultr API 数据"""

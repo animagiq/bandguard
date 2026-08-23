@@ -495,8 +495,8 @@ def test_period_reset_skips_active_period():
     assert db.conn.executes == [], '周期未结束不应写库'
 
 
-def test_period_reset_not_on_boundary_day():
-    """边界日（today == period_end）不重置；次日（today > period_end）才重置"""
+def test_period_reset_on_boundary_day():
+    """日历月对齐：today == period_end 的边界日即重置（Feb 1 – Mar 1 周期在 Mar 1 归零）"""
     svc = _make_service(1)
     usage = _make_usage(1, total=999, blocked=True)
     usage.period_start = '2025-01-01'
@@ -505,16 +505,26 @@ def test_period_reset_not_on_boundary_day():
     ipt = FakeIptables()
     monitor = _make_monitor(db, ipt)
 
-    # 边界当天：不重置
+    # 边界当天（today == period_end）：重置，新周期以今天为起点
     monitor.check_period_reset(today=date(2025, 2, 28))
-    assert db.usage[1].total_bytes == 999, '边界当天不应重置'
-    assert db.conn.executes == []
-    assert ipt.unblock_calls == []
-
-    # 次日：重置
-    monitor.check_period_reset(today=date(2025, 3, 1))
-    assert db.usage[1].total_bytes == 0, '超过边界日应重置'
+    assert db.usage[1].total_bytes == 0, '边界当天应重置'
+    assert db.usage[1].is_blocked is False
     assert ipt.unblock_calls == ['web']
+    assert db.usage[1].period_start == '2025-02-28', db.usage[1].period_start
+    assert db.usage[1].period_end == '2025-03-01', db.usage[1].period_end
+
+    # 边界前一天（today < period_end）：不重置
+    usage2 = _make_usage(1, total=777, blocked=True)
+    usage2.period_start = '2025-01-01'
+    usage2.period_end = '2025-02-28'
+    db2 = FakeDB([svc], config={'reset_day': '1'}, usage={1: usage2})
+    ipt2 = FakeIptables()
+    monitor2 = _make_monitor(db2, ipt2)
+
+    monitor2.check_period_reset(today=date(2025, 2, 27))
+    assert db2.usage[1].total_bytes == 777, '边界前一天不应重置'
+    assert ipt2.unblock_calls == [], f'边界前一天不应解封: {ipt2.unblock_calls}'
+    assert db2.conn.executes == []
 
 
 def test_period_reset_clamps_reset_day_to_feb():
@@ -578,6 +588,89 @@ def test_period_reset_missing_usage_row_warns_and_skips():
 # 测试运行器（无第三方框架，纯 assert + 打印，与仓库其他测试一致）
 # ---------------------------------------------------------------------------
 
+def test_start_reconciles_block_state_after_restart():
+    """宿主机重启（内核规则丢失）后 start() 按 DB 状态重新协调：
+    已封禁 → 补封禁（幂等）；未封禁 → 幂等解封（无规则时为空操作）"""
+    svc = _make_service(1)
+    usage = _make_usage(1, total=5000, blocked=True)
+    usage.period_start = '2025-01-01'
+    usage.period_end = '2099-01-01'  # 未过期，避免周期重置干扰封禁断言
+    db = FakeDB([svc], config={'initialized': '1', 'monitor_interval': '1'},
+                usage={1: usage})
+    ipt = FakeIptables()
+    monitor = _make_monitor(db, ipt)
+
+    with patch('src.daemon.time.sleep', side_effect=SystemExit(0)):
+        try:
+            monitor.start()
+        except SystemExit:
+            pass
+
+    assert ipt.setup_calls == [('web', [80])]
+    assert ipt.block_calls == ['web'], f'已封禁服务重启后应补封禁: {ipt.block_calls}'
+    assert ipt.unblock_calls == [], f'已封禁服务不应被解封: {ipt.unblock_calls}'
+
+
+def test_start_reconciles_unblocked_noop():
+    """未封禁服务重启后 start() 协调为幂等解封（链上无 REJECT 时为空操作）"""
+    svc = _make_service(1)
+    usage = _make_usage(1, total=100, blocked=False)
+    usage.period_start = '2025-01-01'
+    usage.period_end = '2099-01-01'
+    db = FakeDB([svc], config={'initialized': '1', 'monitor_interval': '1'},
+                usage={1: usage})
+    ipt = FakeIptables()
+    monitor = _make_monitor(db, ipt)
+
+    with patch('src.daemon.time.sleep', side_effect=SystemExit(0)):
+        try:
+            monitor.start()
+        except SystemExit:
+            pass
+
+    assert ipt.block_calls == [], f'未封禁服务不应被封禁: {ipt.block_calls}'
+    assert ipt.unblock_calls == ['web'], f'未封禁服务应协调为解封: {ipt.unblock_calls}'
+
+
+def test_start_invalid_interval_falls_back_to_60():
+    """monitor_interval 非数字 / <=0 时回退到 60 并打印警告，不崩溃"""
+    for bad in ('abc', '0', '-5'):
+        svc = _make_service(1)
+        usage = _make_usage(1, total=100, blocked=False)
+        usage.period_start = '2025-01-01'
+        usage.period_end = '2099-01-01'
+        db = FakeDB([svc], config={'initialized': '1', 'monitor_interval': bad},
+                    usage={1: usage})
+        monitor = _make_monitor(db, FakeIptables())
+
+        with patch('src.daemon.time.sleep', side_effect=SystemExit(0)), \
+             patch('src.daemon.print') as mock_print:
+            try:
+                monitor.start()
+            except SystemExit:
+                pass
+
+        printed = ' '.join(str(c.args[0]) for c in mock_print.call_args_list)
+        assert '回退到 60' in printed, f'monitor_interval={bad!r} 应回退并警告: {printed}'
+        assert '监控间隔: 60 秒' in printed, f'应使用 60 秒间隔: {printed}'
+
+
+def test_prune_old_data_issues_delete_sql():
+    """数据保留清理：按保留策略对三张表执行 DELETE（窗口由 SQLite datetime 函数表达）"""
+    svc = _make_service(1)
+    db = FakeDB([svc], config={}, usage={1: _make_usage(1)})
+    monitor = _make_monitor(db, FakeIptables())
+
+    monitor.prune_old_data()
+
+    sqls = [sql for sql, _ in db.conn.executes]
+    assert len(sqls) == 3, f'应执行 3 条 DELETE: {sqls}'
+    assert any('DELETE FROM traffic_stats' in s and "-91 days" in s for s in sqls), sqls
+    assert any('DELETE FROM vultr_stats' in s and "-13 months" in s for s in sqls), sqls
+    assert any('DELETE FROM alerts' in s and "-13 months" in s for s in sqls), sqls
+    assert db.conn.commits == 1
+
+
 def _run_all():
     tests = [
         test_first_read_establishes_baseline_only,
@@ -595,10 +688,14 @@ def _run_all():
         test_period_reset_resets_usage_unblocks_and_clears_alerts,
         test_period_reset_expired_but_not_blocked_no_unblock,
         test_period_reset_skips_active_period,
-        test_period_reset_not_on_boundary_day,
+        test_period_reset_on_boundary_day,
         test_period_reset_clamps_reset_day_to_feb,
         test_period_reset_invalid_reset_day_falls_back_to_1,
         test_period_reset_missing_usage_row_warns_and_skips,
+        test_start_reconciles_block_state_after_restart,
+        test_start_reconciles_unblocked_noop,
+        test_start_invalid_interval_falls_back_to_60,
+        test_prune_old_data_issues_delete_sql,
     ]
     failures = []
     for test in tests:
