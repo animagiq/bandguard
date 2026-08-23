@@ -154,7 +154,10 @@ async def get_status():
         "total_usage": round(total_usage, 1),
         "total_quota": round(total_quota, 1),
         "total_percentage": round(total_usage / total_quota * 100, 1) if total_quota > 0 else 0,
-        "days_until_reset": days_until_reset
+        "days_until_reset": days_until_reset,
+        "vultr_total_gb": round(vultr_total / (1024**3), 1),
+        "vultr_balance": float(config.get('vultr_balance', 0)),
+        "vultr_pending_charges": float(config.get('vultr_pending_charges', 0))
     })
 
 
