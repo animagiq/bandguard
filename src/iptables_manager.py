@@ -30,6 +30,24 @@ class IptablesManager:
 
     def __init__(self):
         self._check_iptables()
+        self._ensure_master_chains()
+
+    def _ensure_master_chains(self):
+        """确保主统计链 TRAFFIC_IN/OUT 存在并挂载到 INPUT/OUTPUT"""
+        for chain, builtin in [('TRAFFIC_IN', 'INPUT'), ('TRAFFIC_OUT', 'OUTPUT')]:
+            for backend in BACKENDS:
+                # 创建主链（如不存在）
+                if not self._backend_chain_exists(backend, chain):
+                    self._run_rule(backend, ['-N', chain])
+                
+                # 检查是否已挂载
+                result = subprocess.run(
+                    [backend, '-C', builtin, '-j', chain],
+                    capture_output=True
+                )
+                if result.returncode != 0:
+                    # 挂载到内建链第一条
+                    self._run_rule(backend, ['-I', builtin, '1', '-j', chain])
 
     def _check_iptables(self):
         """检查 iptables 与 ip6tables 是否均可用"""
