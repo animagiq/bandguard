@@ -174,7 +174,7 @@ async def get_status():
         )
         row = cursor.fetchone()
         if row:
-            vultr_total = (row['total_bytes_in'] + row['total_bytes_out']) / (1024**3)
+            vultr_total = row['total_bytes_in'] + row['total_bytes_out']
     except Exception as e:
         print(f'Failed to fetch Vultr stats: {e}')
     
