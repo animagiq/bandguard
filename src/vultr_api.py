@@ -45,33 +45,38 @@ class VultrAPIClient:
             return None
     
     def fetch_bandwidth(self) -> Optional[Dict[str, int]]:
-        """获取当前账户的带宽使用情况（账户级别）
+        """获取当前实例的带宽使用情况（实例级别，按日期统计）
         
         Returns:
             {
-                'incoming_bytes': int,
-                'outgoing_bytes': int,
-                'total_bytes': int
+                'incoming_bytes': int,  # 汇总所有日期的入站流量
+                'outgoing_bytes': int,  # 汇总所有日期的出站流量
+                'total_bytes': int      # 总流量
             }
             或 None（如果请求失败）
         """
         try:
-            # 使用账户级别带宽 API
-            url = f'{self.BASE_URL}/account/bandwidth'
+            # 使用实例级别带宽 API（按日期返回）
+            url = f'{self.BASE_URL}/instances/{self.instance_id}/bandwidth'
             resp = requests.get(url, headers=self.headers, timeout=10)
             resp.raise_for_status()
             
             data = resp.json()
             
-            # 返回当前账期的总带宽
+            # 汇总所有日期的流量
             if 'bandwidth' in data:
-                bw = data['bandwidth']
-                incoming = bw.get('incoming_bytes', 0)
-                outgoing = bw.get('outgoing_bytes', 0)
+                daily_stats = data['bandwidth']
+                incoming_total = 0
+                outgoing_total = 0
+                
+                for date, stats in daily_stats.items():
+                    incoming_total += stats.get('incoming_bytes', 0)
+                    outgoing_total += stats.get('outgoing_bytes', 0)
+                
                 return {
-                    'incoming_bytes': incoming,
-                    'outgoing_bytes': outgoing,
-                    'total_bytes': incoming + outgoing
+                    'incoming_bytes': incoming_total,
+                    'outgoing_bytes': outgoing_total,
+                    'total_bytes': incoming_total + outgoing_total
                 }
             
             return None
