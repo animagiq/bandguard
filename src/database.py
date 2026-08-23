@@ -127,11 +127,11 @@ class Database:
             ))
         return services
     
-    def add_service(self, name: str, ports: List[int], quota_bytes: int):
+    def add_service(self, name: str, ports: List[int], protocols: str, quota_bytes: int):
         """添加服务"""
         self.conn.execute(
-            'INSERT INTO services (name, ports, quota_bytes) VALUES (?, ?, ?)',
-            (name, json.dumps(ports), quota_bytes)
+            'INSERT INTO services (name, ports, protocols, quota_bytes) VALUES (?, ?, ?, ?)',
+            (name, json.dumps(ports), protocols, quota_bytes)
         )
         service_id = self.conn.execute(
             'SELECT last_insert_rowid()'
