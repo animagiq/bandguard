@@ -356,6 +356,33 @@
             border-color: var(--accent);
         }
 
+        .form-group .input-with-toggle {
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+
+        .form-group .input-with-toggle input {
+            flex: 1;
+            padding-right: 2.5rem;
+        }
+
+        .form-group .toggle-visibility {
+            position: absolute;
+            right: 0.75rem;
+            background: none;
+            border: none;
+            color: var(--text-dim);
+            cursor: pointer;
+            padding: 0.25rem;
+            font-size: 1rem;
+            transition: color 0.2s;
+        }
+
+        .form-group .toggle-visibility:hover {
+            color: var(--text);
+        }
+
         .form-group .help-text {
             margin-top: 0.5rem;
             font-size: 0.75rem;
@@ -424,7 +451,10 @@
             <form id="configForm">
                 <div class="form-group">
                     <label for="vultrApiKey">Vultr API Key</label>
-                    <input type="password" id="vultrApiKey" placeholder="输入 Vultr API Key">
+                    <div class="input-with-toggle">
+                        <input type="password" id="vultrApiKey" placeholder="输入 Vultr API Key">
+                        <button type="button" class="toggle-visibility" onclick="togglePasswordVisibility('vultrApiKey', this)">👁️</button>
+                    </div>
                     <div class="help-text">
                         <a href="https://my.vultr.com/settings/#settingsapi" target="_blank">获取 API Key</a>
                     </div>
@@ -435,7 +465,10 @@
                 </div>
                 <div class="form-group">
                     <label for="serverchanKey">Server酱 SendKey</label>
-                    <input type="password" id="serverchanKey" placeholder="输入 SendKey">
+                    <div class="input-with-toggle">
+                        <input type="password" id="serverchanKey" placeholder="输入 SendKey">
+                        <button type="button" class="toggle-visibility" onclick="togglePasswordVisibility('serverchanKey', this)">👁️</button>
+                    </div>
                     <div class="help-text">
                         <a href="https://sct.ftqq.com/sendkey" target="_blank">获取 SendKey</a>
                     </div>
@@ -720,6 +753,17 @@
                 loadStatus();
             } catch (e) {
                 alert('删除失败: ' + e.message);
+            }
+        }
+
+        function togglePasswordVisibility(inputId, button) {
+            const input = document.getElementById(inputId);
+            if (input.type === 'password') {
+                input.type = 'text';
+                button.textContent = '🙈';  // see-no-evil monkey
+            } else {
+                input.type = 'password';
+                button.textContent = '👁️';  // eye
             }
         }
     </script>
