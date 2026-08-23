@@ -791,7 +791,6 @@
                 const data = await res.json();
                 
                 if (res.ok) {
-                    // 立即刷新状态
                     await loadStatus();
                     alert('同步成功！');
                 } else {

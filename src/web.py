@@ -354,21 +354,20 @@ async def delete_service(service_name: str):
 @app.post("/api/sync-vultr")
 async def sync_vultr_now():
     """立即同步 Vultr 数据"""
+    db = get_db()
+    config = db.get_all_config()
+    api_key = config.get('vultr_api_key')
+    instance_id = config.get('vultr_instance_id')
+    
+    if not api_key or not instance_id:
+        raise HTTPException(400, "Vultr API 未配置")
+    
+    from src.vultr_api import VultrAPIClient
+    from datetime import datetime
+    
+    client = VultrAPIClient(api_key, instance_id)
+    
     try:
-        db = get_db()
-        config = db.get_all_config()
-        api_key = config.get('vultr_api_key')
-        instance_id = config.get('vultr_instance_id')
-        
-        if not api_key or not instance_id:
-            raise HTTPException(400, "Vultr API 未配置")
-        
-        # 同步带宽和账户信息
-        from src.vultr_api import VultrAPIClient
-        from datetime import datetime
-        
-        client = VultrAPIClient(api_key, instance_id)
-        
         # 获取带宽
         bandwidth = client.fetch_bandwidth()
         if bandwidth:
@@ -395,7 +394,16 @@ async def sync_vultr_now():
         })
     
     except Exception as e:
-        raise HTTPException(500, f"同步失败: {str(e)}")
+        # 返回具体错误信息
+        error_msg = str(e)
+        if '401' in error_msg or 'Unauthorized' in error_msg:
+            raise HTTPException(401, "API Key 无效或权限不足，请检查 Vultr 控制台")
+        elif '404' in error_msg:
+            raise HTTPException(404, f"Instance ID 不存在: {instance_id}")
+        elif 'timeout' in error_msg.lower():
+            raise HTTPException(504, "Vultr API 请求超时，请稍后重试")
+        else:
+            raise HTTPException(500, f"同步失败: {error_msg}")
 
 
 if __name__ == "__main__":
