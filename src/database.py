@@ -12,6 +12,7 @@ class Service:
     id: int
     name: str
     ports: List[int]
+    protocols: str
     quota_bytes: int
 
 
@@ -130,6 +131,7 @@ class Database:
                 id=row['id'],
                 name=row['name'],
                 ports=json.loads(row['ports']),
+                protocols=row['protocols'],
                 quota_bytes=row['quota_bytes']
             ))
         return services
