@@ -49,6 +49,10 @@ cleanup_leftovers() {
     docker rmi "$IMAGE_NAME" >/dev/null 2>&1 || true
 }
 
+# 任何退出路径（成功或失败）都执行清理：防止失败时容器/卷/镜像残留在目标服务器上
+# （成功路径上 Step 8 已清理，此处为幂等 no-op）
+trap cleanup_leftovers EXIT
+
 # 轮询等待守护进程完成 iptables 链创建（最多 20 秒）
 wait_for_chains() {
     local tries=0
@@ -95,7 +99,7 @@ pass "初始化完成（hy2/nginx 默认配置）"
 
 # 4. 测试 CLI 命令
 echo -e "${GREEN}[4/8] 测试 CLI 命令${NC}"
-INIT_VALUE=$(docker exec "$CONTAINER_NAME" traffic-ctl config --get initialized)
+INIT_VALUE=$(docker exec "$CONTAINER_NAME" traffic-ctl config --get initialized) || fail "config --get initialized 执行失败"
 [ "$INIT_VALUE" = "initialized = 1" ] || fail "config --get initialized 输出异常: '$INIT_VALUE'（应为 'initialized = 1'）"
 pass "config --get initialized = 1"
 
@@ -169,7 +173,7 @@ pass "链清理后守护进程仍存活"
 echo -e "${GREEN}[7/8] 验证数据持久化${NC}"
 docker restart "$CONTAINER_NAME" >/dev/null || fail "docker restart 失败"
 sleep 3
-INIT_VALUE=$(docker exec "$CONTAINER_NAME" traffic-ctl config --get initialized)
+INIT_VALUE=$(docker exec "$CONTAINER_NAME" traffic-ctl config --get initialized) || fail "重启后 config --get initialized 执行失败"
 [ "$INIT_VALUE" = "initialized = 1" ] || fail "容器重启后 initialized 配置丢失: '$INIT_VALUE'"
 STATUS_OUTPUT=$(docker exec "$CONTAINER_NAME" traffic-ctl status) || fail "重启后 status 执行失败"
 echo "$STATUS_OUTPUT" | grep -q 'hy2' || fail "重启后服务数据丢失（status 无 hy2）"
