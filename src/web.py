@@ -162,23 +162,25 @@ async def get_status():
 
 
 @app.get("/api/config")
-async def get_config():
-    """Get global configuration (with secrets masked)."""
+async def get_config(unmask: bool = False):
+    """Get global configuration (with secrets masked unless unmask=true)."""
     db = get_db()
     config = db.get_all_config()
     
-    # Mask sensitive values
-    masked_config = {}
-    for key, value in config.items():
-        if any(s in key for s in ['_key', 'pass', 'token']):
-            if value and len(value) > 6:
-                masked_config[key] = value[:3] + '*****' + value[-3:]
+    # Mask sensitive values unless unmask=true
+    if not unmask:
+        masked_config = {}
+        for key, value in config.items():
+            if any(s in key for s in ['_key', 'pass', 'token']):
+                if value and len(value) > 6:
+                    masked_config[key] = value[:3] + '*****' + value[-3:]
+                else:
+                    masked_config[key] = '*****' if value else None
             else:
-                masked_config[key] = '*****' if value else None
-        else:
-            masked_config[key] = value
+                masked_config[key] = value
+        return JSONResponse(masked_config)
     
-    return JSONResponse(masked_config)
+    return JSONResponse(config)
 
 
 @app.post("/api/config")
