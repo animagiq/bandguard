@@ -39,7 +39,20 @@ fi
 # 检测 Docker Compose
 if ! command -v docker-compose &> /dev/null; then
     echo -e "${YELLOW}安装 Docker Compose...${NC}"
-    apt-get update && apt-get install -y docker-compose
+    # 优先检查 docker compose plugin（Docker 官方安装自带）
+    if docker compose version &> /dev/null; then
+        echo -e "${GREEN}Docker Compose plugin 已可用${NC}"
+    else
+        # 尝试安装系统包，忽略冲突错误（plugin 可能已存在）
+        apt-get update
+        apt-get install -y docker-compose 2>&1 | grep -v "trying to overwrite" || true
+        
+        # 验证任一方式可用
+        if ! docker compose version &> /dev/null && ! command -v docker-compose &> /dev/null; then
+            echo -e "${RED}错误: Docker Compose 安装失败${NC}" >&2
+            exit 1
+        fi
+    fi
     echo -e "${GREEN}Docker Compose 安装完成${NC}"
 fi
 
