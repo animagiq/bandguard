@@ -213,7 +213,7 @@ async def create_service(service: ServiceCreate):
     
     # Check if service already exists
     existing = db.get_all_services()
-    if any(s['name'] == service.name for s in existing):
+    if any(s.name == service.name for s in existing):
         raise HTTPException(400, f"Service '{service.name}' already exists")
     
     # Add to database
