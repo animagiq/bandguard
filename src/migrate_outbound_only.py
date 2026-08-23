@@ -2,9 +2,9 @@
 """数据库迁移脚本：重置为只统计出站流量
 
 执行操作：
-1. 清空 period_usage.total_bytes（重置当前周期使用量）
+1. 按 traffic_stats 历史出站重算 period_usage.total_bytes（Vultr 只计费出站）
 2. 清空 alerts 表（重置告警记录，避免误触发）
-3. 保留 traffic_stats 历史数据（bytes_in 将废弃，只使用 bytes_out）
+3. traffic_stats 历史数据保留（bytes_in 列废弃，只使用 bytes_out）
 
 用法：
     python src/migrate_outbound_only.py [--db-path /path/to/db]
@@ -28,12 +28,27 @@ def migrate(db_path: str):
     db = Database(db_path)
     
     try:
-        # 1. 重置 period_usage
+        # 1. 按历史出站重算 period_usage（入站不计费，丢弃）
         cursor = db.conn.execute("SELECT COUNT(*) as count FROM period_usage")
         count_before = cursor.fetchone()['count']
-        
-        db.conn.execute("UPDATE period_usage SET total_bytes = 0")
-        print(f"✓ 已重置 {count_before} 条 period_usage 记录")
+
+        db.conn.execute("""
+            UPDATE period_usage SET total_bytes = (
+                SELECT COALESCE(SUM(ts.bytes_out), 0)
+                FROM traffic_stats ts
+                WHERE ts.service_id = period_usage.service_id
+                  AND ts.timestamp >= period_usage.period_start
+            )
+        """)
+
+        rows = db.conn.execute("""
+            SELECT s.name, pu.total_bytes
+            FROM period_usage pu JOIN services s ON s.id = pu.service_id
+        """).fetchall()
+        for row in rows:
+            print(f"✓ 服务 {row['name']}: total_bytes = {row['total_bytes']} "
+                  f"({row['total_bytes'] / (1024**3):.2f} GB，仅出站)")
+        print(f"✓ 已重算 {count_before} 条 period_usage 记录")
         
         # 2. 清空 alerts
         cursor = db.conn.execute("SELECT COUNT(*) as count FROM alerts")
