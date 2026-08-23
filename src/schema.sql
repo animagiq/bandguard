@@ -5,8 +5,13 @@ CREATE TABLE IF NOT EXISTS services (
     ports TEXT NOT NULL,
     protocols TEXT NOT NULL DEFAULT 'both',
     quota_bytes INTEGER NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    parent_id INTEGER REFERENCES services(id),
+    display_ports TEXT DEFAULT '[]',
+    is_group BOOLEAN DEFAULT 0
 );
+
+CREATE INDEX IF NOT EXISTS idx_services_parent ON services(parent_id);
 
 -- 流量统计表（时序数据）
 CREATE TABLE IF NOT EXISTS traffic_stats (

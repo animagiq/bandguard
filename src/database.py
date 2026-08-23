@@ -14,6 +14,13 @@ class Service:
     ports: List[int]
     protocols: str
     quota_bytes: int
+    parent_id: Optional[int] = None
+    display_ports: List[int] = None
+    is_group: bool = False
+
+    def __post_init__(self):
+        if self.display_ports is None:
+            self.display_ports = []
 
 
 @dataclass
@@ -96,7 +103,24 @@ class Database:
             self.conn.execute('ALTER TABLE services ADD COLUMN protocols TEXT DEFAULT "both"')
         except sqlite3.OperationalError:
             pass  # Column already exists
-        
+
+        # Migration: add tree structure columns
+        for migration_sql in [
+            'ALTER TABLE services ADD COLUMN parent_id INTEGER REFERENCES services(id)',
+            "ALTER TABLE services ADD COLUMN display_ports TEXT DEFAULT '[]'",
+            'ALTER TABLE services ADD COLUMN is_group BOOLEAN DEFAULT 0',
+        ]:
+            try:
+                self.conn.execute(migration_sql)
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
+        # Migration: create index if not exists
+        try:
+            self.conn.execute('CREATE INDEX IF NOT EXISTS idx_services_parent ON services(parent_id)')
+        except sqlite3.OperationalError:
+            pass
+
         self.conn.commit()
     
     def get_config(self, key: str) -> Optional[str]:
@@ -121,9 +145,9 @@ class Database:
         self.conn.commit()
     
     def get_all_services(self) -> List[Service]:
-        """获取所有服务"""
+        """获取所有服务（含树结构字段）"""
         cursor = self.conn.execute(
-            'SELECT id, name, ports, protocols, quota_bytes FROM services'
+            'SELECT id, name, ports, protocols, quota_bytes, parent_id, display_ports, is_group FROM services'
         )
         services = []
         for row in cursor.fetchall():
@@ -132,15 +156,19 @@ class Database:
                 name=row['name'],
                 ports=json.loads(row['ports']),
                 protocols=row['protocols'],
-                quota_bytes=row['quota_bytes']
+                quota_bytes=row['quota_bytes'],
+                parent_id=row['parent_id'],
+                display_ports=json.loads(row['display_ports']) if row['display_ports'] else [],
+                is_group=bool(row['is_group'])
             ))
         return services
     
-    def add_service(self, name: str, ports: List[int], protocols: str, quota_bytes: int):
-        """添加服务"""
+    def add_service(self, name: str, ports: List[int], protocols: str, quota_bytes: int,
+                    parent_id: Optional[int] = None, display_ports: Optional[List[int]] = None):
+        """添加服务（可选指定父分组和展示端口）"""
         self.conn.execute(
-            'INSERT INTO services (name, ports, protocols, quota_bytes) VALUES (?, ?, ?, ?)',
-            (name, json.dumps(ports), protocols, quota_bytes)
+            'INSERT INTO services (name, ports, protocols, quota_bytes, parent_id, display_ports) VALUES (?, ?, ?, ?, ?, ?)',
+            (name, json.dumps(ports), protocols, quota_bytes, parent_id, json.dumps(display_ports or []))
         )
         service_id = self.conn.execute(
             'SELECT last_insert_rowid()'
@@ -249,6 +277,96 @@ class Database:
         )
         self.conn.commit()
     
+    def add_group(self, name: str) -> int:
+        """创建一个分组节点（is_group=1, ports=[]）"""
+        self.conn.execute(
+            'INSERT INTO services (name, ports, protocols, quota_bytes, is_group, display_ports) VALUES (?, ?, ?, ?, 1, ?)',
+            (name, json.dumps([]), 'both', 0, json.dumps([]))
+        )
+        group_id = self.conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+        self.conn.commit()
+        return int(group_id)
+
+    def get_children(self, parent_id: int) -> List[Service]:
+        """获取某个分组下的所有子服务"""
+        cursor = self.conn.execute(
+            'SELECT id, name, ports, protocols, quota_bytes, parent_id, display_ports, is_group FROM services WHERE parent_id = ?',
+            (parent_id,)
+        )
+        services = []
+        for row in cursor.fetchall():
+            services.append(Service(
+                id=row['id'],
+                name=row['name'],
+                ports=json.loads(row['ports']),
+                protocols=row['protocols'],
+                quota_bytes=row['quota_bytes'],
+                parent_id=row['parent_id'],
+                display_ports=json.loads(row['display_ports']) if row['display_ports'] else [],
+                is_group=bool(row['is_group'])
+            ))
+        return services
+
+    def get_tree(self) -> List[Dict]:
+        """返回嵌套树结构，用于 UI 展示。
+
+        返回顶层节点列表（is_group=0 且 parent_id IS NULL 的服务 + 所有分组），
+        每个分组节点包含 children 字段。
+        """
+        all_services = self.get_all_services()
+
+        # Build lookup by id
+        by_id: Dict[int, Dict] = {}
+        for svc in all_services:
+            by_id[svc.id] = {
+                'id': svc.id,
+                'name': svc.name,
+                'ports': svc.ports,
+                'protocols': svc.protocols,
+                'quota_bytes': svc.quota_bytes,
+                'parent_id': svc.parent_id,
+                'display_ports': svc.display_ports,
+                'is_group': svc.is_group,
+                'children': [] if svc.is_group else None,
+            }
+
+        # Build tree: attach children to their parents
+        roots: List[Dict] = []
+        for node in by_id.values():
+            pid = node['parent_id']
+            if pid is not None and pid in by_id:
+                by_id[pid]['children'].append(node)
+            else:
+                roots.append(node)
+
+        return roots
+
+    def set_parent(self, service_id: int, parent_id: Optional[int]):
+        """将服务移到分组下或移出分组（parent_id=None 变为独立服务）"""
+        if parent_id is not None:
+            # Validate parent exists and is a group
+            cursor = self.conn.execute(
+                'SELECT is_group FROM services WHERE id = ?', (parent_id,)
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise ValueError(f'父节点 {parent_id} 不存在')
+            if not row['is_group']:
+                raise ValueError(f'父节点 {parent_id} 不是分组')
+        self.conn.execute(
+            'UPDATE services SET parent_id = ? WHERE id = ?',
+            (parent_id, service_id)
+        )
+        self.conn.commit()
+
+    def update_display_ports(self, service_id: int, display_ports: List[int]):
+        """更新服务的展示端口（内部端口，不计费）"""
+        self.conn.execute(
+            'UPDATE services SET display_ports = ? WHERE id = ?',
+            (json.dumps(display_ports), service_id)
+        )
+        self.conn.commit()
+
     def close(self):
         """关闭数据库连接"""
         if self.conn:
