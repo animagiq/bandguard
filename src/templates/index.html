@@ -629,6 +629,7 @@
                                 ? `<button onclick="unblockService('${s.name}')">解封</button>`
                                 : `<button class="danger" onclick="blockService('${s.name}')">封禁</button>`
                             }
+                            <button onclick="editService('${s.name}')" class="secondary" style="padding: 0.5rem 1rem;">编辑</button>
                             <button onclick="deleteService('${s.name}')">删除</button>
                         </div>
                     </div>
@@ -713,22 +714,32 @@
             };
 
             try {
-                const res = await fetch('/api/services', {
-                    method: 'POST',
+                let url = '/api/services';
+                let method = 'POST';
+                
+                if (editingService) {
+                    url = `/api/services/${editingService}`;
+                    method = 'PATCH';
+                    delete data.name;
+                }
+
+                const res = await fetch(url, {
+                    method: method,
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(data)
                 });
                 
                 if (!res.ok) {
                     const err = await res.json();
-                    throw new Error(err.detail || '添加失败');
+                    throw new Error(err.detail || '操作失败');
                 }
 
                 hideAddServiceModal();
                 document.getElementById('addServiceForm').reset();
                 loadStatus();
+                alert(editingService ? '修改成功' : '添加成功');
             } catch (e) {
-                alert('添加服务失败: ' + e.message);
+                alert((editingService ? '修改' : '添加') + '服务失败: ' + e.message);
             }
         });
 
