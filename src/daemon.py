@@ -45,8 +45,13 @@ class TrafficMonitor:
 
         # 检查是否已初始化
         if self.db.get_config('initialized') != '1':
-            print("错误：系统未初始化，请先运行 'traffic-ctl init'")
-            sys.exit(1)
+            print("系统未初始化，等待 Web 界面配置（访问 http://your-server-ip:8080）...")
+            # 进入等待循环，直到配置完成
+            while True:
+                time.sleep(30)
+                if self.db.get_config('initialized') == '1':
+                    print("检测到配置完成，重新启动监控...")
+                    break
 
         # 为所有服务设置 iptables 规则
         for service in self.db.get_all_services():
