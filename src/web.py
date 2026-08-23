@@ -114,15 +114,15 @@ async def get_status():
             total_quota += quota_gb
     
     # Calculate days until reset
+    reset_day = int(config.get('reset_day', 1))
+    today = datetime.now().date()
+    
     if services_data:
+        # Use period_end from first service
         period_end = datetime.fromisoformat(services_data[0]['period_end'])
-        today = datetime.now().date()
         days_until_reset = (period_end.date() - today).days
     else:
-        # No services yet - use reset_day from config
-        reset_day = int(config.get('reset_day', 1))
-        today = datetime.now().date()
-        # Calculate next reset date
+        # No services - calculate next reset from reset_day
         if today.day < reset_day:
             next_reset = today.replace(day=reset_day)
         else:
@@ -135,6 +135,18 @@ async def get_status():
                 max_day = monthrange(today.year, next_month)[1]
                 next_reset = today.replace(month=next_month, day=min(reset_day, max_day))
         days_until_reset = (next_reset - today).days
+    
+    # Fetch latest Vultr stats (independent of services)
+    vultr_total = 0
+    try:
+        cursor = db.conn.execute(
+            'SELECT total_bytes FROM vultr_stats ORDER BY timestamp DESC LIMIT 1'
+        )
+        row = cursor.fetchone()
+        if row:
+            vultr_total = row['total_bytes']
+    except Exception as e:
+        print(f'Failed to fetch Vultr stats: {e}')
     
     return JSONResponse({
         "initialized": True,
