@@ -302,8 +302,6 @@ async def update_service(service_name: str, update: ServiceUpdate):
             (json.dumps(update.ports), service_name)
         )
         updates['ports'] = update.ports
-            except Exception as e:
-                raise HTTPException(500, f"Failed to update iptables: {str(e)}")
     
     # Update protocols if provided
     if update.protocols is not None:
