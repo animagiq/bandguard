@@ -202,18 +202,21 @@ async def create_service(service: ServiceCreate):
         raise HTTPException(400, f"Service '{service.name}' already exists")
     
     # Add to database
-    config = db.get_all_config()
     quota_bytes = service.quota * (1024**3)
+    
+    # Map frontend protocols value
+    protocols = service.protocols[0] if service.protocols else 'both'
     
     db.add_service(
         name=service.name,
         ports=service.ports,
+        protocols=protocols,
         quota_bytes=quota_bytes
     )
     
     # Setup iptables chains
     try:
-        iptables.setup_chain(service.name, service.ports)
+        iptables.setup_chain(service.name, service.ports, protocols)
     except Exception as e:
         # Rollback database change
         db.conn.execute("DELETE FROM services WHERE name = ?", (service.name,))

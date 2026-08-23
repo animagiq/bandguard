@@ -89,6 +89,13 @@ class Database:
         with open(schema_path, 'r', encoding='utf-8') as f:
             schema_sql = f.read()
         self.conn.executescript(schema_sql)
+        
+        # Migration: add protocols column if upgrading from old schema
+        try:
+            self.conn.execute('ALTER TABLE services ADD COLUMN protocols TEXT DEFAULT "both"')
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+        
         self.conn.commit()
     
     def get_config(self, key: str) -> Optional[str]:
@@ -115,7 +122,7 @@ class Database:
     def get_all_services(self) -> List[Service]:
         """获取所有服务"""
         cursor = self.conn.execute(
-            'SELECT id, name, ports, quota_bytes FROM services'
+            'SELECT id, name, ports, protocols, quota_bytes FROM services'
         )
         services = []
         for row in cursor.fetchall():
