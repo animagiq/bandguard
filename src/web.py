@@ -140,11 +140,11 @@ async def get_status():
     vultr_total = 0
     try:
         cursor = db.conn.execute(
-            'SELECT total_bytes FROM vultr_stats ORDER BY timestamp DESC LIMIT 1'
+            'SELECT total_bytes_in, total_bytes_out FROM vultr_stats ORDER BY timestamp DESC LIMIT 1'
         )
         row = cursor.fetchone()
         if row:
-            vultr_total = row['total_bytes']
+            vultr_total = (row['total_bytes_in'] + row['total_bytes_out']) / (1024**3)
     except Exception as e:
         print(f'Failed to fetch Vultr stats: {e}')
     
