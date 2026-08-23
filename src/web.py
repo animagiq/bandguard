@@ -89,7 +89,7 @@ async def get_status():
     total_quota = 0
     
     for service in db.get_all_services():
-        usage = db.get_period_usage(service.name)
+        usage = db.get_period_usage(service.id)
         if usage:
             quota_gb = service.quota_bytes / (1024**3)
             used_gb = usage['bytes_total'] / (1024**3)
