@@ -178,6 +178,30 @@ def test_status_with_vultr_comparison():
         assert '差异:' in result.output
 
 
+def test_status_with_zero_quota_no_crash():
+    """set-quota 0G 后 status 不崩溃；0 配额行仍显示服务名与配额"""
+    with _use_temp_db() as db_path:
+        runner = CliRunner()
+        runner.invoke(cli, ['init', '--auto'])
+
+        result = runner.invoke(cli, ['set-quota', 'hy2', '0G'])
+        assert result.exit_code == 0, result.output
+
+        # 写一些流量，确保 status 走到该行的百分比计算
+        db = Database(db_path)
+        try:
+            hy2 = _service_lookup(db)['hy2']
+            assert hy2.quota_bytes == 0
+            db.update_period_usage(hy2.id, 5 * 1024 ** 3)
+        finally:
+            db.close()
+
+        result = runner.invoke(cli, ['status'])
+        assert result.exit_code == 0, result.output
+        assert 'hy2' in result.output
+        assert '0.00 GB' in result.output
+
+
 def test_config_set_get_and_list():
     """config --set/--get/裸列表 的读写循环（含 initialized 查询）"""
     with _use_temp_db():
@@ -356,6 +380,7 @@ def _run_all():
         test_init_second_run_noop,
         test_status_shows_services_and_totals,
         test_status_with_vultr_comparison,
+        test_status_with_zero_quota_no_crash,
         test_config_set_get_and_list,
         test_set_quota_parsing,
         test_block_and_unblock,

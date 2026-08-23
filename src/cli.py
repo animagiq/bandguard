@@ -118,7 +118,7 @@ def status():
 
         used_gb = usage.total_bytes / (1024 ** 3)
         quota_gb = svc.quota_bytes / (1024 ** 3)
-        percentage = (usage.total_bytes / svc.quota_bytes) * 100
+        percentage = (usage.total_bytes / svc.quota_bytes * 100) if svc.quota_bytes > 0 else 0
         status_text = '🔴 已封禁' if usage.is_blocked else '🟢 运行中'
 
         table_data.append([
