@@ -406,6 +406,7 @@
         <h1>traffic-monitor</h1>
         <div style="display: flex; gap: 1rem; align-items: center;">
             <div class="reset-info" id="resetInfo">加载中...</div>
+            <div class="reset-info" id="vultrStats" style="display: none; color: var(--text-dim);"></div>
             <button onclick="showConfigModal()" style="padding: 0.5rem 1rem; font-size: 0.875rem;">⚙️ 设置</button>
         </div>
     </div>
@@ -567,6 +568,15 @@
             document.getElementById('totalPercentage').textContent = `${totalPct}%`;
             document.getElementById('totalDetails').textContent = 
                 `${statusData.total_usage} / ${statusData.total_quota} GB`;
+            
+            // Update Vultr official stats if available
+            if (statusData.vultr_total_gb !== undefined) {
+                const vultrEl = document.getElementById('vultrStats');
+                if (vultrEl) {
+                    vultrEl.textContent = `Vultr 官方统计: ${statusData.vultr_total_gb} GB`;
+                    vultrEl.style.display = 'block';
+                }
+            }
 
             // Render services
             const grid = document.getElementById('servicesGrid');
