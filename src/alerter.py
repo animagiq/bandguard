@@ -34,7 +34,7 @@ class Alerter:
             try:
                 self._send_serverchan(title, content, serverchan_key)
             except Exception as e:
-                print(f"Server酱通知失败: {e}")
+                print(f"Server酱通知失败: {self._sanitize_error(e, serverchan_key)}")
         
         # 尝试发送邮件
         smtp_host = self.get_config('smtp_host')
@@ -83,6 +83,17 @@ docker exec -it traffic-monitor traffic-ctl unblock {service_name}
         
         return title, content
     
+    def _sanitize_error(self, error: Exception, sendkey: str) -> str:
+        """清洗异常消息：掩蔽 sendkey，防止含密钥的完整 URL 泄漏到日志（I4）
+
+        requests.HTTPError 的 str() 会包含完整请求 URL
+        （https://sctapi.ftqq.com/<sendkey>.send），直接打印会把密钥写进日志。
+        """
+        message = str(error)
+        if sendkey:
+            message = message.replace(sendkey, '*****')
+        return message
+
     def _send_serverchan(self, title: str, content: str, sendkey: str):
         """发送 Server酱微信通知"""
         url = f'https://sctapi.ftqq.com/{sendkey}.send'
@@ -135,7 +146,7 @@ docker exec -it traffic-monitor traffic-ctl unblock {service_name}
                     self._send_serverchan(test_title, test_content, serverchan_key)
                     print("✓ Server酱测试通知已发送")
                 except Exception as e:
-                    print(f"✗ Server酱测试失败: {e}")
+                    print(f"✗ Server酱测试失败: {self._sanitize_error(e, serverchan_key)}")
         
         if channel in ['email', 'all']:
             smtp_host = self.get_config('smtp_host')

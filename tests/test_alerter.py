@@ -89,6 +89,40 @@ def test_serverchan_request_shape():
     print("✓ Server酱请求格式测试通过")
 
 
+def test_serverchan_error_leaks_no_sendkey():
+    """Server酱 请求失败时日志不得包含 sendkey（完整 URL 被掩蔽为 *****）"""
+    import requests
+    from src.alerter import Alerter
+
+    sendkey = 'SCT_secret_key_12345'
+    config = {'serverchan_key': sendkey}
+    alerter = Alerter(lambda key: config.get(key, ''))
+
+    # 模拟 HTTPError：str() 包含完整 URL（含 sendkey）
+    err = requests.HTTPError(
+        f"500 Server Error for url: https://sctapi.ftqq.com/{sendkey}.send"
+    )
+
+    with patch('requests.post', side_effect=err) as mock_post, \
+         patch('src.alerter.print') as mock_print:
+        alerter.send_alert('hy2', 'threshold_80', 100, 200)
+
+    mock_post.assert_called_once()
+    printed = ' '.join(str(c.args) for c in mock_print.call_args_list)
+    assert sendkey not in printed, f'日志泄漏 sendkey: {printed}'
+    assert 'Server酱通知失败' in printed
+
+    # test_notification 路径同样掩蔽
+    with patch('requests.post', side_effect=err) as mock_post, \
+         patch('src.alerter.print') as mock_print:
+        alerter.test_notification('serverchan')
+
+    printed = ' '.join(str(c.args) for c in mock_print.call_args_list)
+    assert sendkey not in printed, f'test_notification 日志泄漏 sendkey: {printed}'
+
+    print("✓ Server酱错误日志掩蔽测试通过")
+
+
 def test_email_skips_incomplete_config():
     """测试邮件配置不完整时静默跳过（不发起真实网络连接）"""
     from src.alerter import Alerter
@@ -138,6 +172,7 @@ if __name__ == '__main__':
     test_alerter()
     test_quota_exceeded_formatting()
     test_serverchan_request_shape()
+    test_serverchan_error_leaks_no_sendkey()
     test_email_skips_incomplete_config()
     test_send_alert_no_config_noop()
     test_test_notification_no_config()
