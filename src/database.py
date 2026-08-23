@@ -92,12 +92,17 @@ class Database:
         self.conn.commit()
     
     def get_config(self, key: str) -> Optional[str]:
-        """获取配置值"""
+        """获取单个配置值"""
         cursor = self.conn.execute(
             'SELECT value FROM config WHERE key = ?', (key,)
         )
         row = cursor.fetchone()
         return row['value'] if row else None
+    
+    def get_all_config(self) -> dict:
+        """获取所有配置（返回字典）"""
+        cursor = self.conn.execute('SELECT key, value FROM config')
+        return {row['key']: row['value'] for row in cursor.fetchall()}
     
     def set_config(self, key: str, value: str):
         """设置配置值"""
