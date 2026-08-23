@@ -306,24 +306,29 @@ async def update_service(service_name: str, update: ServiceUpdate):
     
     # Update protocols if provided
     if update.protocols is not None:
-        valid_protocols = {'tcp', 'udp', 'both'}
-        if not all(p in valid_protocols for p in update.protocols):
-            raise HTTPException(400, "Invalid protocol")
-        updates['protocols'] = ','.join(update.protocols)
+        protocols_str = update.protocols[0] if len(update.protocols) == 1 else 'both'
+        try:
+            iptables.cleanup_chain(service_name)
+            iptables.setup_chain(service_name, service.ports if update.ports is None else update.ports, protocols_str)
+        except Exception as e:
+            raise HTTPException(500, f"Failed to update iptables: {str(e)}")
+        
+        db.conn.execute(
+            'UPDATE services SET protocols = ? WHERE name = ?',
+            (protocols_str, service_name)
+        )
+        updates['protocols'] = protocols_str
     
     # Update quota if provided
     if update.quota is not None:
-        updates['quota'] = update.quota * (1024**3)
-    
-    # Apply database updates
-    if updates:
-        set_clause = ', '.join(f"{k} = ?" for k in updates.keys())
+        quota_bytes = update.quota * (1024**3)
         db.conn.execute(
-            f"UPDATE services SET {set_clause} WHERE name = ?",
-            list(updates.values()) + [service_name]
+            'UPDATE services SET quota_bytes = ? WHERE name = ?',
+            (quota_bytes, service_name)
         )
-        db.conn.commit()
+        updates['quota'] = update.quota
     
+    db.conn.commit()
     return JSONResponse({"status": "ok", "updated": list(updates.keys())})
 
 
