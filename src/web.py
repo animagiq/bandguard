@@ -203,15 +203,12 @@ async def create_service(service: ServiceCreate):
     
     # Add to database
     config = db.get_all_config()
-    reset_day = int(config.get('reset_day', 1))
     quota_bytes = service.quota * (1024**3)
     
     db.add_service(
         name=service.name,
-        ports=','.join(map(str, service.ports)),
-        protocols=','.join(service.protocols),
-        quota=quota_bytes,
-        config=config
+        ports=service.ports,
+        quota_bytes=quota_bytes
     )
     
     # Setup iptables chains
