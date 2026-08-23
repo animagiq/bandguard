@@ -349,6 +349,53 @@ async def delete_service(service_name: str):
     return JSONResponse({"status": "ok", "deleted": service_name})
 
 
+@app.post("/api/sync-vultr")
+async def sync_vultr_now():
+    """立即同步 Vultr 数据"""
+    try:
+        db = get_db()
+        config = db.get_all_config()
+        api_key = config.get('vultr_api_key')
+        instance_id = config.get('vultr_instance_id')
+        
+        if not api_key or not instance_id:
+            raise HTTPException(400, "Vultr API 未配置")
+        
+        # 同步带宽和账户信息
+        from src.vultr_api import VultrAPIClient
+        from datetime import datetime
+        
+        client = VultrAPIClient(api_key, instance_id)
+        
+        # 获取带宽
+        bandwidth = client.fetch_bandwidth()
+        if bandwidth:
+            current_month = datetime.now().strftime('%Y-%m')
+            db.conn.execute(
+                '''INSERT INTO vultr_stats (total_bytes_in, total_bytes_out, billing_period)
+                   VALUES (?, ?, ?)''',
+                (bandwidth['incoming_bytes'], bandwidth['outgoing_bytes'], current_month)
+            )
+            db.conn.commit()
+        
+        # 获取账户信息
+        account_info = client.fetch_account_info()
+        if account_info:
+            db.set_config('vultr_balance', str(account_info['balance']))
+            db.set_config('vultr_pending_charges', str(account_info['pending_charges']))
+        
+        return JSONResponse({
+            "success": True,
+            "message": "Vultr 数据已同步",
+            "bandwidth_gb": round(bandwidth['total_bytes'] / (1024**3), 1) if bandwidth else 0,
+            "balance": account_info['balance'] if account_info else 0,
+            "pending_charges": account_info['pending_charges'] if account_info else 0
+        })
+    
+    except Exception as e:
+        raise HTTPException(500, f"同步失败: {str(e)}")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8080)
