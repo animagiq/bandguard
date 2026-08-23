@@ -1,6 +1,6 @@
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, date
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -15,14 +15,27 @@ from src.database import Service, PeriodUsage
 # ---------------------------------------------------------------------------
 
 class FakeConn:
-    """记录 SQL 执行的假连接（供 sync_vultr_data 使用）"""
+    """记录 SQL 执行的假连接（供 sync_vultr_data / check_period_reset 使用）
 
-    def __init__(self):
+    周期重置 UPDATE（period_usage 清零）会同步应用到内存态 usage dict，
+    与真实 SQLite 行为一致，便于断言重置后的状态。
+    """
+
+    def __init__(self, db=None):
+        self.db = db
         self.executes = []  # [(sql, params), ...]
         self.commits = 0
 
     def execute(self, sql, params=None):
         self.executes.append((sql, params))
+        if self.db and 'UPDATE period_usage' in sql:
+            service_id = params[-1]
+            usage = self.db.usage.get(service_id)
+            if usage:
+                usage.period_start, usage.period_end = params[0], params[1]
+                usage.total_bytes = 0
+                usage.is_blocked = False
+                usage.blocked_at = None
         return self
 
     def commit(self):
@@ -38,7 +51,7 @@ class FakeDB:
         self.usage_updates = []     # [(service_id, delta)]
         self.alert_triggers = {}    # {(service_id, alert_type): message}
         self.blocked = []           # 被标记封禁的 service_id
-        self.conn = FakeConn()
+        self.conn = FakeConn(self)
 
     def get_config(self, key):
         return self.config.get(key)
@@ -415,6 +428,152 @@ def test_sync_vultr_data_error_handled():
     assert db.conn.executes == []
 
 
+def test_period_reset_resets_usage_unblocks_and_clears_alerts():
+    """周期已结束（period_end 为昨天）→ 用量清零、自动解封、清告警、推进新周期"""
+    svc = _make_service(1)
+    usage = _make_usage(1, total=5000, blocked=True)
+    usage.period_start = '2025-01-01'
+    usage.period_end = '2025-02-01'
+    db = FakeDB([svc], config={'reset_day': '1'}, usage={1: usage})
+    db.alert_triggers[(1, 'threshold_80')] = '80% threshold reached'
+    db.alert_triggers[(1, 'quota_exceeded')] = 'Quota exceeded'
+    ipt = FakeIptables()
+    monitor = _make_monitor(db, ipt)
+
+    monitor.check_period_reset(today=date(2025, 2, 2))
+
+    # 用量清零、解除封禁、周期推进到 2025-02-02 ~ 2025-03-01
+    assert db.usage[1].total_bytes == 0, '重置后总用量应为 0'
+    assert db.usage[1].is_blocked is False, '重置后应解除封禁标记'
+    assert db.usage[1].blocked_at is None
+    assert db.usage[1].period_start == '2025-02-02', db.usage[1].period_start
+    assert db.usage[1].period_end == '2025-03-01', db.usage[1].period_end
+    # 原封禁服务自动解封（仅调用 unblock，不封禁）
+    assert ipt.unblock_calls == ['web'], f'应解封一次: {ipt.unblock_calls}'
+    assert ipt.block_calls == []
+    # 告警记录被清除
+    assert db.alert_triggers == {}, '重置应清除该服务的全部告警'
+    # UPDATE 落库参数正确（service_id 匹配）
+    sql, params = db.conn.executes[-1]
+    assert 'UPDATE period_usage' in sql
+    assert params == ('2025-02-02', '2025-03-01', 1), params
+    assert db.conn.commits == 1
+
+
+def test_period_reset_expired_but_not_blocked_no_unblock():
+    """周期已结束但未封禁 → 正常重置，但不调用 iptables 解封"""
+    svc = _make_service(1)
+    usage = _make_usage(1, total=3000, blocked=False)
+    usage.period_start = '2025-01-01'
+    usage.period_end = '2025-02-01'
+    db = FakeDB([svc], config={'reset_day': '1'}, usage={1: usage})
+    ipt = FakeIptables()
+    monitor = _make_monitor(db, ipt)
+
+    monitor.check_period_reset(today=date(2025, 2, 2))
+
+    assert db.usage[1].total_bytes == 0, '用量仍应重置'
+    assert db.usage[1].is_blocked is False
+    assert ipt.unblock_calls == [], f'未封禁的服务不应解封: {ipt.unblock_calls}'
+
+
+def test_period_reset_skips_active_period():
+    """周期未结束（period_end 在未来）→ 不做任何修改、不调用 iptables"""
+    svc = _make_service(1)
+    usage = _make_usage(1, total=1234, blocked=True)
+    usage.period_start = '2025-01-01'
+    usage.period_end = '2025-02-28'
+    db = FakeDB([svc], config={'reset_day': '1'}, usage={1: usage})
+    ipt = FakeIptables()
+    monitor = _make_monitor(db, ipt)
+
+    monitor.check_period_reset(today=date(2025, 2, 1))
+
+    assert db.usage[1].total_bytes == 1234, '周期未结束不应清零'
+    assert db.usage[1].is_blocked is True, '周期未结束不应解除封禁标记'
+    assert ipt.unblock_calls == [], f'周期未结束不应解封: {ipt.unblock_calls}'
+    assert db.conn.executes == [], '周期未结束不应写库'
+
+
+def test_period_reset_not_on_boundary_day():
+    """边界日（today == period_end）不重置；次日（today > period_end）才重置"""
+    svc = _make_service(1)
+    usage = _make_usage(1, total=999, blocked=True)
+    usage.period_start = '2025-01-01'
+    usage.period_end = '2025-02-28'
+    db = FakeDB([svc], config={'reset_day': '1'}, usage={1: usage})
+    ipt = FakeIptables()
+    monitor = _make_monitor(db, ipt)
+
+    # 边界当天：不重置
+    monitor.check_period_reset(today=date(2025, 2, 28))
+    assert db.usage[1].total_bytes == 999, '边界当天不应重置'
+    assert db.conn.executes == []
+    assert ipt.unblock_calls == []
+
+    # 次日：重置
+    monitor.check_period_reset(today=date(2025, 3, 1))
+    assert db.usage[1].total_bytes == 0, '超过边界日应重置'
+    assert ipt.unblock_calls == ['web']
+
+
+def test_period_reset_clamps_reset_day_to_feb():
+    """reset_day=31 落在 2 月（30 天以下月份）→ 周期结束日钳制到 28 日，不抛异常"""
+    svc = _make_service(1)
+    usage = _make_usage(1, total=500, blocked=True)
+    usage.period_start = '2025-01-31'
+    usage.period_end = '2025-01-31'  # 已过期，触发重置
+    db = FakeDB([svc], config={'reset_day': '31'}, usage={1: usage})
+    ipt = FakeIptables()
+    monitor = _make_monitor(db, ipt)
+
+    monitor.check_period_reset(today=date(2025, 2, 1))  # 不应抛出 ValueError
+
+    assert db.usage[1].period_end == '2025-02-28', \
+        f'2 月应钳制到 28 日: {db.usage[1].period_end}'
+    assert db.usage[1].total_bytes == 0
+    assert db.usage[1].is_blocked is False
+    assert ipt.unblock_calls == ['web']
+
+
+def test_period_reset_invalid_reset_day_falls_back_to_1():
+    """reset_day 配置非法（非数字 / 0 / 负数）→ 回退到 1，不崩溃"""
+    svc = _make_service(1)
+    ipt = FakeIptables()
+
+    for bad_value in ('abc', '0', '-5'):
+        usage = _make_usage(1, total=800, blocked=True)
+        usage.period_start = '2025-01-01'
+        usage.period_end = '2025-01-31'
+        db = FakeDB([svc], config={'reset_day': bad_value}, usage={1: usage})
+        ipt = FakeIptables()
+        monitor = _make_monitor(db, ipt)
+
+        monitor.check_period_reset(today=date(2025, 2, 1))  # 不应抛出
+
+        # 回退到 reset_day=1：新周期 2025-02-01 ~ 2025-03-01
+        assert db.usage[1].period_end == '2025-03-01', \
+            f'非法配置 {bad_value!r} 应回退到 1: {db.usage[1].period_end}'
+        assert db.usage[1].total_bytes == 0
+        assert ipt.unblock_calls == ['web']
+
+
+def test_period_reset_missing_usage_row_warns_and_skips():
+    """服务缺少 period_usage 记录（DB 被篡改）→ 打印警告并跳过，不崩溃"""
+    svc = _make_service(1)
+    db = FakeDB([svc], config={'reset_day': '1'}, usage={})  # 无 usage 记录
+    ipt = FakeIptables()
+    monitor = _make_monitor(db, ipt)
+
+    with patch('src.daemon.print') as mock_print:
+        monitor.check_period_reset(today=date(2025, 2, 1))  # 不应抛出
+
+    warnings = [c.args[0] for c in mock_print.call_args_list]
+    assert any('web' in str(w) and '缺少' in str(w) for w in warnings), warnings
+    assert ipt.unblock_calls == []
+    assert db.conn.executes == []
+
+
 # ---------------------------------------------------------------------------
 # 测试运行器（无第三方框架，纯 assert + 打印，与仓库其他测试一致）
 # ---------------------------------------------------------------------------
@@ -433,6 +592,13 @@ def _run_all():
         test_sync_vultr_data_writes_stats,
         test_sync_vultr_data_no_client_noop,
         test_sync_vultr_data_error_handled,
+        test_period_reset_resets_usage_unblocks_and_clears_alerts,
+        test_period_reset_expired_but_not_blocked_no_unblock,
+        test_period_reset_skips_active_period,
+        test_period_reset_not_on_boundary_day,
+        test_period_reset_clamps_reset_day_to_feb,
+        test_period_reset_invalid_reset_day_falls_back_to_1,
+        test_period_reset_missing_usage_row_warns_and_skips,
     ]
     failures = []
     for test in tests:

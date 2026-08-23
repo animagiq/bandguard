@@ -1,6 +1,7 @@
 import time
 import signal
 import sys
+import calendar
 from datetime import datetime
 from typing import Dict
 
@@ -56,8 +57,12 @@ class TrafficMonitor:
         self.running = True
         interval = int(self.db.get_config('monitor_interval') or '60')
         vultr_sync_counter = 0
+        period_check_counter = 0
 
         print(f"监控间隔: {interval} 秒")
+
+        # 启动时立即检查一次周期重置（覆盖守护进程停机期间过期的周期）
+        self.check_period_reset()
 
         while self.running:
             try:
@@ -68,6 +73,12 @@ class TrafficMonitor:
                 if vultr_sync_counter >= (3600 / interval):
                     self.sync_vultr_data()
                     vultr_sync_counter = 0
+
+                # 每 24 小时检查一次周期重置
+                period_check_counter += 1
+                if period_check_counter >= (86400 / interval):
+                    self.check_period_reset()
+                    period_check_counter = 0
 
                 time.sleep(interval)
 
@@ -194,6 +205,97 @@ class TrafficMonitor:
                 service.id, 'quota_exceeded',
                 'Quota exceeded, service blocked'
             )
+
+    def check_period_reset(self, today=None):
+        """检查并执行周期重置
+
+        对每个服务：若 today > period_end（周期已结束），将总用量清零、
+        解除封禁并清除告警，同时把周期推进到以 today 为起点的下一周期。
+        服务原本处于封禁状态时自动解封。
+
+        today 参数用于测试注入固定日期；生产环境默认取当天。
+        """
+        if today is None:
+            today = datetime.now().date()
+
+        reset_day = self._safe_reset_day()
+
+        for service in self.db.get_all_services():
+            try:
+                usage = self.db.get_period_usage(service.id)
+                if usage is None:
+                    # 防御：DB 被篡改/记录缺失时跳过，不崩溃
+                    print(f"警告: 服务 {service.name} 缺少 period_usage 记录，跳过重置检查")
+                    continue
+
+                period_end = datetime.fromisoformat(usage.period_end).date()
+
+                # 仅在超过周期结束日才重置（边界当天不重置）
+                if today <= period_end:
+                    continue
+
+                print(f"重置服务周期: {service.name}")
+
+                # 新周期：以今天为起点，结束日按 reset_day 计算（超出天数钳制）
+                new_start = today
+                new_end = self._safe_period_end(today, reset_day)
+
+                # 若原状态为封禁，重置后需要自动解封（基于 UPDATE 前快照判断）
+                was_blocked = usage.is_blocked
+
+                self.db.conn.execute(
+                    '''UPDATE period_usage
+                       SET period_start = ?, period_end = ?,
+                           total_bytes = 0, is_blocked = 0, blocked_at = NULL
+                       WHERE service_id = ?''',
+                    (new_start.isoformat(), new_end.isoformat(), service.id)
+                )
+                self.db.conn.commit()
+
+                if was_blocked:
+                    self.iptables.unblock_service(service.name)
+                    print(f"自动解封服务: {service.name}")
+
+                # 清除该服务的全部告警记录
+                self.db.clear_alerts(service.id)
+
+            except Exception as e:
+                print(f"重置 {service.name} 周期失败: {e}")
+
+    def _safe_reset_day(self):
+        """读取并校验 reset_day 配置
+
+        非数字 / 0 / 负数等非法值回退到 1 并打印警告，避免 int() 抛异常。
+        """
+        raw = self.db.get_config('reset_day') or '1'
+        try:
+            reset_day = int(raw)
+        except (TypeError, ValueError):
+            print(f"警告: 非法 reset_day 配置 '{raw}'，回退到 1")
+            return 1
+        if reset_day <= 0:
+            print(f"警告: reset_day 配置 '{raw}' 不在有效范围（应为 1-31），回退到 1")
+            return 1
+        return reset_day
+
+    def _safe_period_end(self, start_date, reset_day: int):
+        """计算周期结束日期（与 Database._calculate_period_end 语义一致，带天数钳制）
+
+        reset_day 超过目标月份天数时钳制到该月最后一天
+        （如 reset_day=31、目标月为 2 月 → 28/29 日），避免 ValueError。
+        """
+        if start_date.day < reset_day:
+            end_month = start_date.month
+            end_year = start_date.year
+        else:
+            end_month = start_date.month + 1
+            end_year = start_date.year
+            if end_month > 12:
+                end_month = 1
+                end_year += 1
+
+        days_in_month = calendar.monthrange(end_year, end_month)[1]
+        return datetime(end_year, end_month, min(reset_day, days_in_month)).date()
 
     def sync_vultr_data(self):
         """同步 Vultr API 数据"""
