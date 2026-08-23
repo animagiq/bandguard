@@ -50,7 +50,13 @@ class TrafficMonitor:
             while True:
                 time.sleep(30)
                 if self.db.get_config('initialized') == '1':
-                    print("检测到配置完成，重新启动监控...")
+                    print("检测到配置完成，重新加载配置...")
+                    # 重新读取配置并初始化 Vultr 客户端
+                    api_key = self.db.get_config('vultr_api_key')
+                    instance_id = self.db.get_config('vultr_instance_id')
+                    if api_key and instance_id:
+                        self.vultr_client = VultrAPIClient(api_key, instance_id)
+                        print("Vultr API 客户端已初始化")
                     break
 
         # 为所有服务设置 iptables 规则
