@@ -42,19 +42,27 @@ def _use_temp_db():
 
 
 class FakeIptables:
-    """记录 block/unblock 调用，模拟幂等的 iptables 管理器"""
+    """记录 block/unblock 调用，模拟幂等的 iptables 管理器；可注入 RuntimeError"""
     block_calls = []
     unblock_calls = []
+    fail_block = False
+    fail_unblock = False
 
     @classmethod
     def reset(cls):
         cls.block_calls = []
         cls.unblock_calls = []
+        cls.fail_block = False
+        cls.fail_unblock = False
 
     def block_service(self, name):
+        if FakeIptables.fail_block:
+            raise RuntimeError('iptables 不可用: 链不存在')
         FakeIptables.block_calls.append(name)
 
     def unblock_service(self, name):
+        if FakeIptables.fail_unblock:
+            raise RuntimeError('iptables 不可用: 链不存在')
         FakeIptables.unblock_calls.append(name)
 
 
@@ -256,6 +264,149 @@ def test_set_quota_parsing():
         assert "错误：服务 'bogus' 不存在" in result.output
 
 
+def test_config_masks_secrets():
+    """config 裸列表掩蔽敏感键（key/pass/token）；--set 回显不泄露明文"""
+    with _use_temp_db() as db_path:
+        runner = CliRunner()
+        runner.invoke(cli, ['init', '--auto'])
+
+        db = Database(db_path)
+        try:
+            db.set_config('serverchan_key', 'SCT_secret123456789')
+            db.set_config('smtp_pass', 'hunter2')
+            db.set_config('vultr_api_key', 'VULTR_API_ABC')
+            db.set_config('smtp_port', '587')
+        finally:
+            db.close()
+
+        # --set 回显掩蔽为 *****
+        result = runner.invoke(cli, ['config', '--set', 'serverchan_key', 'SCT_new_secret'])
+        assert result.exit_code == 0, result.output
+        assert 'SCT_new_secret' not in result.output
+        assert '✓ 设置 serverchan_key = *****' in result.output
+
+        # --set 非敏感键正常回显
+        result = runner.invoke(cli, ['config', '--set', 'monitor_interval', '30'])
+        assert '✓ 设置 monitor_interval = 30' in result.output
+
+        # 裸列表：敏感键明文不出现，展示掩蔽值
+        result = runner.invoke(cli, ['config'])
+        assert 'SCT_new_secret' not in result.output
+        assert 'hunter2' not in result.output
+        assert 'VULTR_API_ABC' not in result.output
+        # 掩蔽后保留首尾 3 字符
+        assert 'SCT********ret' in result.output, result.output
+        assert 'VUL*******ABC' in result.output, result.output
+        # 非敏感键仍展示明文
+        assert 'smtp_port' in result.output and '587' in result.output
+        assert 'monitor_interval' in result.output
+
+
+def test_set_quota_validation():
+    """set-quota：非数字 / 负数为友好错误；不影响存量示例（G/GB/纯字节）"""
+    with _use_temp_db() as db_path:
+        runner = CliRunner()
+        runner.invoke(cli, ['init', '--auto'])
+
+        orig_quota = None
+        # 非数字：命中自定义校验，友好报错
+        for bad in ('abc', '12X'):
+            result = runner.invoke(cli, ['set-quota', 'hy2', bad])
+            assert result.exit_code == 0, result.output
+            assert '错误' in result.output, f'{bad!r} 应友好报错: {result.output}'
+
+            db = Database(db_path)
+            try:
+                quota = _service_lookup(db)['hy2'].quota_bytes
+                if orig_quota is None:
+                    orig_quota = quota
+                assert quota == orig_quota, f'{bad!r} 不应修改配额: {quota}'
+            finally:
+                db.close()
+
+        # 负数：以 '--' 终止选项解析后命中自定义校验（-5G 也先被 click 拒绝为
+        # 未知选项，但同样无 traceback）
+        for bad in ('-5G', '-100'):
+            result = runner.invoke(cli, ['set-quota', 'hy2', '--', bad])
+            assert result.exit_code == 0, result.output
+            assert '不能为负数' in result.output, f'{bad!r} 应友好报错: {result.output}'
+
+            db = Database(db_path)
+            try:
+                quota = _service_lookup(db)['hy2'].quota_bytes
+                assert quota == orig_quota, f'{bad!r} 不应修改配额: {quota}'
+            finally:
+                db.close()
+
+        # 不带 -- 的负数：click 标准错误（无 traceback）
+        result = runner.invoke(cli, ['set-quota', 'hy2', '-100'])
+        assert result.exit_code != 0
+        assert 'Traceback' not in result.output
+
+
+def test_block_unblock_runtime_error_hint():
+    """block/unblock 遇 RuntimeError（链缺失/iptables 不可用）时给出友好提示，无 traceback"""
+    with _use_temp_db() as db_path:
+        runner = CliRunner()
+        runner.invoke(cli, ['init', '--auto'])
+
+        orig = cli_module.IptablesManager
+        cli_module.IptablesManager = FakeIptables
+        try:
+            # block 失败：提示 + 不落库
+            FakeIptables.reset()
+            FakeIptables.fail_block = True
+            result = runner.invoke(cli, ['block', 'hy2'])
+            assert result.exit_code == 0, result.output
+            assert '请先启动 daemon' in result.output, result.output
+            assert 'Traceback' not in result.output
+
+            db = Database(db_path)
+            try:
+                assert not db.get_period_usage(_service_lookup(db)['hy2'].id).is_blocked, \
+                    '封禁失败不应标记数据库'
+            finally:
+                db.close()
+
+            # unblock 失败：提示 + 状态保持
+            FakeIptables.reset()
+            FakeIptables.fail_unblock = True
+            result = runner.invoke(cli, ['unblock', 'hy2'])
+            assert result.exit_code == 0, result.output
+            assert '请先启动 daemon' in result.output, result.output
+            assert 'Traceback' not in result.output
+        finally:
+            cli_module.IptablesManager = orig
+
+
+def test_history_window_day_granular():
+    """history 使用本地日期窗口：15 天前的记录不在 --days 7 内，但在 --days 30 内"""
+    with _use_temp_db() as db_path:
+        runner = CliRunner()
+        runner.invoke(cli, ['init', '--auto'])
+
+        db = Database(db_path)
+        try:
+            hy2 = _service_lookup(db)['hy2']
+            db.conn.execute(
+                '''INSERT INTO traffic_stats (service_id, bytes_in, bytes_out, timestamp)
+                   VALUES (?, 0, ?, datetime('now', '-15 days'))''',
+                (hy2.id, 1024 ** 3)
+            )
+            db.conn.commit()
+        finally:
+            db.close()
+
+        result = runner.invoke(cli, ['history', '--service', 'hy2', '--days', '7'])
+        assert result.exit_code == 0, result.output
+        assert '1.00 GB' not in result.output, \
+            f'15 天前记录不应出现在 7 天窗口: {result.output}'
+
+        result = runner.invoke(cli, ['history', '--service', 'hy2', '--days', '30'])
+        assert result.exit_code == 0, result.output
+        assert '1.00 GB' in result.output, f'30 天窗口应包含该记录: {result.output}'
+
+
 def test_block_and_unblock():
     """block/unblock 调用 IptablesManager 并同步数据库状态（幂等）"""
     with _use_temp_db() as db_path:
@@ -382,9 +533,13 @@ def _run_all():
         test_status_with_vultr_comparison,
         test_status_with_zero_quota_no_crash,
         test_config_set_get_and_list,
+        test_config_masks_secrets,
         test_set_quota_parsing,
+        test_set_quota_validation,
         test_block_and_unblock,
+        test_block_unblock_runtime_error_hint,
         test_history_aggregation_and_filter,
+        test_history_window_day_granular,
         test_test_alert_channels,
     ]
     failures = []

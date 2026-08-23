@@ -1,6 +1,5 @@
 import click
 from tabulate import tabulate
-from datetime import datetime, timedelta
 
 from src.database import Database
 from src.iptables_manager import IptablesManager
@@ -9,6 +8,22 @@ from src.alerter import Alerter
 # 测试钩子：命令统一读取该变量作为数据库路径。
 # 默认指向容器内数据目录；测试可将其替换为临时路径（无需修改 Database 类）。
 db_path = '/data/traffic_monitor.db'
+
+# 配置键含以下子串（不区分大小写）时视为敏感项，禁止回显明文
+_SECRET_KEY_PARTS = ('key', 'pass', 'token')
+
+
+def _is_secret_key(key: str) -> bool:
+    """判断配置键是否为敏感项（含 key / pass / token 之一）"""
+    lower = key.lower()
+    return any(part in lower for part in _SECRET_KEY_PARTS)
+
+
+def _mask_secret(value: str) -> str:
+    """敏感值掩蔽：保留首尾 3 字符，其余用 * 代替（短值直接全掩蔽）"""
+    if len(value) <= 6:
+        return '*****'
+    return f"{value[:3]}{'*' * (len(value) - 6)}{value[-3:]}"
 
 
 @click.group()
@@ -173,11 +188,18 @@ def config(set_kv, get_key):
     elif set_kv:
         for key, value in set_kv:
             db.set_config(key, value)
-            click.echo(f"✓ 设置 {key} = {value}")
+            # 敏感键不回显明文，防止 sendkey/密码 泄漏到终端与日志
+            if _is_secret_key(key):
+                click.echo(f"✓ 设置 {key} = *****")
+            else:
+                click.echo(f"✓ 设置 {key} = {value}")
     else:
-        # 显示所有配置
+        # 显示所有配置（敏感键掩蔽展示）
         cursor = db.conn.execute('SELECT key, value FROM config')
-        table_data = [[row['key'], row['value']] for row in cursor.fetchall()]
+        table_data = [
+            [row['key'], _mask_secret(row['value']) if _is_secret_key(row['key']) else row['value']]
+            for row in cursor.fetchall()
+        ]
         click.echo(tabulate(table_data, headers=['配置项', '值'], tablefmt='simple'))
 
 
@@ -200,7 +222,12 @@ def block(service_name):
         click.echo(f"服务 '{service_name}' 已经处于封禁状态")
         return
 
-    iptables.block_service(service_name)
+    try:
+        iptables.block_service(service_name)
+    except RuntimeError as e:
+        click.echo(f"错误：无法封禁 {service_name}：{e}")
+        click.echo("提示：请先启动 daemon 或检查 iptables（容器内需 NET_ADMIN 权限）")
+        return
     db.mark_service_blocked(service.id)
     click.echo(f"✓ 已封禁服务: {service_name}")
 
@@ -219,7 +246,12 @@ def unblock(service_name):
 
     service = services[service_name]
 
-    iptables.unblock_service(service_name)
+    try:
+        iptables.unblock_service(service_name)
+    except RuntimeError as e:
+        click.echo(f"错误：无法解封 {service_name}：{e}")
+        click.echo("提示：请先启动 daemon 或检查 iptables（容器内需 NET_ADMIN 权限）")
+        return
     db.mark_service_unblocked(service.id)
     click.echo(f"✓ 已解封服务: {service_name}")
 
@@ -236,10 +268,17 @@ def set_quota(service_name, quota):
 
     # 解析配额（支持 G/GB 后缀，不区分大小写）
     quota_str = quota.upper().replace('GB', 'G')
-    if quota_str.endswith('G'):
-        quota_bytes = int(quota_str[:-1]) * 1024 ** 3
-    else:
-        quota_bytes = int(quota_str)
+    try:
+        if quota_str.endswith('G'):
+            quota_bytes = int(quota_str[:-1]) * 1024 ** 3
+        else:
+            quota_bytes = int(quota_str)
+    except ValueError:
+        click.echo(f"错误：配额 '{quota}' 无效，请使用数字（字节）或 G/GB 后缀，如 90G")
+        return
+    if quota_bytes < 0:
+        click.echo(f"错误：配额 '{quota}' 不能为负数，请使用正数（如 90G）")
+        return
 
     services = {svc.name: svc for svc in db.get_all_services()}
     if service_name not in services:
@@ -263,8 +302,6 @@ def history(service, days):
     """查看历史流量数据"""
     db = Database(db_path)
 
-    since = datetime.now() - timedelta(days=days)
-
     if service:
         services = {svc.name: svc for svc in db.get_all_services()}
         if service not in services:
@@ -276,20 +313,20 @@ def history(service, days):
             '''SELECT DATE(timestamp) as date,
                       SUM(bytes_in + bytes_out) as total
                FROM traffic_stats
-               WHERE service_id = ? AND timestamp >= ?
+               WHERE service_id = ? AND date(timestamp) >= date('now', ?, ?)
                GROUP BY DATE(timestamp)
                ORDER BY date DESC''',
-            (service_id, since.isoformat())
+            (service_id, f'-{days} days', 'localtime')
         )
     else:
         cursor = db.conn.execute(
             '''SELECT DATE(timestamp) as date,
                       SUM(bytes_in + bytes_out) as total
                FROM traffic_stats
-               WHERE timestamp >= ?
+               WHERE date(timestamp) >= date('now', ?, ?)
                GROUP BY DATE(timestamp)
                ORDER BY date DESC''',
-            (since.isoformat(),)
+            (f'-{days} days', 'localtime')
         )
 
     table_data = []
