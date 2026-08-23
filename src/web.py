@@ -3,6 +3,7 @@ Web interface for VPC Traffic Monitor.
 FastAPI server providing REST API and serving the dashboard UI.
 """
 import os
+import json
 from datetime import datetime
 from typing import List, Dict, Optional
 from fastapi import FastAPI, HTTPException, Request
