@@ -43,13 +43,16 @@ class TrafficMonitor:
         """启动监控守护进程"""
         print("流量监控守护进程启动")
 
-        # 检查是否已初始化
-        if self.db.get_config('initialized') != '1':
+        # 检查是否已初始化（配置完成或已有服务）
+        initialized = self.db.get_config('initialized') == '1'
+        has_services = len(self.db.get_all_services()) > 0
+        
+        if not initialized and not has_services:
             print("系统未初始化，等待 Web 界面配置（访问 http://your-server-ip:8080）...")
             # 进入等待循环，直到配置完成
             while True:
                 time.sleep(30)
-                if self.db.get_config('initialized') == '1':
+                if self.db.get_config('initialized') == '1' or len(self.db.get_all_services()) > 0:
                     print("检测到配置完成，重新加载配置...")
                     # 重新读取配置并初始化 Vultr 客户端
                     api_key = self.db.get_config('vultr_api_key')
