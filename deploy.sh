@@ -106,11 +106,14 @@ if docker ps | grep -q traffic-monitor; then
     INITIALIZED=${INITIALIZED:-0}
 
     if [ "$INITIALIZED" != "1" ]; then
-        echo -e "${YELLOW}首次部署，需要初始化配置：${NC}"
-        echo -e "   ${GREEN}docker exec -it traffic-monitor traffic-ctl init${NC}\n"
+        echo -e "${YELLOW}首次部署，请访问 Web 界面完成配置：${NC}"
+        echo -e "   ${GREEN}http://$(hostname -I | awk '{print $1}'):8080${NC}"
+        echo -e "\n配置项："
+        echo -e "   - Vultr API Key: https://my.vultr.com/settings/#settingsapi"
+        echo -e "   - Server酱 SendKey: https://sct.ftqq.com/sendkey\n"
     else
-        echo -e "${GREEN}系统已初始化，查看状态：${NC}"
-        echo -e "   ${GREEN}docker exec -it traffic-monitor traffic-ctl status${NC}\n"
+        echo -e "${GREEN}Web 界面：${NC}"
+        echo -e "   ${GREEN}http://$(hostname -I | awk '{print $1}'):8080${NC}\n"
     fi
 
     echo "查看日志："
