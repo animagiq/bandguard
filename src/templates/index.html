@@ -580,10 +580,10 @@
                     if (statusData.vultr_pending_charges !== undefined) {
                         vultrText += ` | 本月费用: $${statusData.vultr_pending_charges.toFixed(2)}`;
                     }
-                    if (statusData.vultr_balance !== undefined) {
-                        // Vultr balance: 负数 = 预付款（credit），正数 = 欠费
-                        const isCredit = statusData.vultr_balance < 0;
-                        const displayBalance = Math.abs(statusData.vultr_balance);
+                    if (statusData.vultr_remaining_credit !== undefined) {
+                        // 剩余余额 = 总充值额度 - 本月费用；正数 = 有余额，负数 = 欠费
+                        const isCredit = statusData.vultr_remaining_credit >= 0;
+                        const displayBalance = Math.abs(statusData.vultr_remaining_credit);
                         const balanceColor = isCredit ? '#10b981' : '#ef4444';
                         const balanceLabel = isCredit ? '余额' : '欠费';
                         vultrText += ` | ${balanceLabel}: <span style="color: ${balanceColor}">$${displayBalance.toFixed(2)}</span>`;

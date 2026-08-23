@@ -185,9 +185,13 @@ async def get_status():
         "total_quota": round(total_quota, 1),
         "total_percentage": round(total_usage / total_quota * 100, 1) if total_quota > 0 else 0,
         "days_until_reset": days_until_reset,
-        "vultr_total_gb": round(vultr_total / (1024**3), 1),
+        "vultr_total_gb": round(vultr_total / (1024**3), 2),
         "vultr_balance": float(config.get('vultr_balance', 0)),
-        "vultr_pending_charges": float(config.get('vultr_pending_charges', 0))
+        "vultr_pending_charges": float(config.get('vultr_pending_charges', 0)),
+        # 剩余余额 = -(balance + pending)：balance 负数=预充值，pending 为本月已产生费用
+        "vultr_remaining_credit": round(
+            -float(config.get('vultr_balance', 0)) - float(config.get('vultr_pending_charges', 0)), 2
+        )
     })
 
 
@@ -428,7 +432,7 @@ async def sync_vultr_now():
         return JSONResponse({
             "success": True,
             "message": "Vultr 数据已同步",
-            "bandwidth_gb": round(bandwidth['total_bytes'] / (1024**3), 1) if bandwidth else 0,
+            "bandwidth_gb": round(bandwidth['total_bytes'] / (1024**3), 2) if bandwidth else 0,
             "balance": account_info['balance'] if account_info else 0,
             "pending_charges": account_info['pending_charges'] if account_info else 0
         })
