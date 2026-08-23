@@ -377,7 +377,10 @@
 <body>
     <div class="topbar">
         <h1>traffic-monitor</h1>
-        <div class="reset-info" id="resetInfo">加载中...</div>
+        <div style="display: flex; gap: 1rem; align-items: center;">
+            <div class="reset-info" id="resetInfo">加载中...</div>
+            <button onclick="showConfigModal()" style="padding: 0.5rem 1rem; font-size: 0.875rem;">⚙️ 设置</button>
+        </div>
     </div>
 
     <div class="container">

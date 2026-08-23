@@ -119,7 +119,22 @@ async def get_status():
         today = datetime.now().date()
         days_until_reset = (period_end.date() - today).days
     else:
-        days_until_reset = None
+        # No services yet - use reset_day from config
+        reset_day = int(config.get('reset_day', 1))
+        today = datetime.now().date()
+        # Calculate next reset date
+        if today.day < reset_day:
+            next_reset = today.replace(day=reset_day)
+        else:
+            # Next month
+            if today.month == 12:
+                next_reset = today.replace(year=today.year+1, month=1, day=reset_day)
+            else:
+                next_month = today.month + 1
+                from calendar import monthrange
+                max_day = monthrange(today.year, next_month)[1]
+                next_reset = today.replace(month=next_month, day=min(reset_day, max_day))
+        days_until_reset = (next_reset - today).days
     
     return JSONResponse({
         "initialized": True,
