@@ -386,5 +386,246 @@ def live(interval, extra_ports):
     LiveWatcher(specs, interval).run()
 
 
+@cli.command()
+@click.argument('port', type=int)
+def discover(port):
+    """反查端口并交互式添加服务"""
+    from src.discovery import discover_port
+    
+    click.echo(f"正在反查端口 {port}...")
+    result = discover_port(port)
+    
+    if not result:
+        click.echo(f"未找到监听端口 {port} 的容器或进程")
+        return
+    
+    click.echo(f"\n→ 端口 {port}/tcp ← {result['source']}: {result['name']}")
+    click.echo("  该服务占用的全部端口:")
+    
+    external_ports = []
+    internal_ports = []
+    
+    for idx, p in enumerate(result['ports'], 1):
+        classification = p['classification']
+        symbol = '✓' if classification == 'external' else ''
+        click.echo(f"    [{idx}] {p['port']}/{p['protocol']}   {p['bind']:15s} → {classification}（{'计入配额' if classification == 'external' else '仅展示'}）{symbol}")
+        
+        if classification == 'external':
+            external_ports.append(idx)
+        else:
+            internal_ports.append(idx)
+    
+    # 用户选择计费端口
+    default_billing = ','.join(map(str, external_ports)) if external_ports else ''
+    billing_input = click.prompt(
+        "选择计费端口（逗号分隔，默认全部外部）",
+        default=default_billing,
+        show_default=False
+    )
+    billing_indices = [int(x.strip()) for x in billing_input.split(',') if x.strip()]
+    billing_ports = [result['ports'][i-1]['port'] for i in billing_indices if 1 <= i <= len(result['ports'])]
+    
+    # 用户选择展示端口
+    default_display = ','.join(map(str, internal_ports)) if internal_ports else ''
+    display_input = click.prompt(
+        "选择展示端口（逗号分隔，默认全部内部）",
+        default=default_display,
+        show_default=False
+    )
+    if display_input.strip():
+        display_indices = [int(x.strip()) for x in display_input.split(',') if x.strip()]
+        display_ports = [result['ports'][i-1]['port'] for i in display_indices if 1 <= i <= len(result['ports'])]
+    else:
+        display_ports = []
+    
+    # 服务名称
+    service_name = click.prompt("服务名称", default=result['name'])
+    
+    # 月配额
+    quota_gb = click.prompt("月配额 (GB)", default=20, type=int)
+    
+    # 归属分组
+    db = Database(db_path)
+    groups = [s for s in db.get_all_services() if s.is_group]
+    
+    if groups:
+        click.echo("\n可用分组:")
+        for g in groups:
+            click.echo(f"  - {g.name}")
+        parent_name = click.prompt("归属分组（留空=独立服务）", default="", show_default=False)
+        parent_id = None
+        if parent_name.strip():
+            matching = [g for g in groups if g.name == parent_name.strip()]
+            if matching:
+                parent_id = matching[0].id
+            else:
+                click.echo(f"警告: 分组 '{parent_name}' 不存在，创建为独立服务")
+    else:
+        parent_id = None
+    
+    # 添加服务
+    db.add_service(service_name, billing_ports, 'both', quota_gb * 1024**3, parent_id, display_ports)
+    
+    # 建立 iptables 链
+    ipt = IptablesManager()
+    for p in billing_ports:
+        ipt.setup_chain(service_name, [p], 'both')
+    
+    parent_info = f"，已挂到分组 {parent_name} 下" if parent_id else ""
+    click.echo(f"\n✓ 已添加服务 {service_name}，计费端口 {billing_ports}，展示端口 {display_ports}，配额 {quota_gb}GB{parent_info}")
+
+
+@cli.group()
+def group():
+    """分组管理"""
+    pass
+
+
+@group.command('add')
+@click.argument('name')
+def group_add(name):
+    """创建分组"""
+    db = Database(db_path)
+    group_id = db.add_group(name)
+    click.echo(f"✓ 已创建分组 '{name}' (ID: {group_id})")
+
+
+@group.command('list')
+def group_list():
+    """列出所有分组"""
+    db = Database(db_path)
+    groups = [s for s in db.get_all_services() if s.is_group]
+    
+    if not groups:
+        click.echo("暂无分组")
+        return
+    
+    for g in groups:
+        children = db.get_children(g.id)
+        child_names = ', '.join([c.name for c in children]) if children else '(空)'
+        click.echo(f"{g.name}: {child_names}")
+
+
+@group.command('remove')
+@click.argument('name')
+def group_remove(name):
+    """删除分组（子服务变为独立）"""
+    db = Database(db_path)
+    groups = [s for s in db.get_all_services() if s.is_group and s.name == name]
+    
+    if not groups:
+        click.echo(f"分组 '{name}' 不存在")
+        return
+    
+    group_id = groups[0].id
+    children = db.get_children(group_id)
+    
+    # 将子服务移出分组
+    for child in children:
+        db.set_parent(child.id, None)
+    
+    # 删除分组
+    db.conn.execute('DELETE FROM services WHERE id = ?', (group_id,))
+    db.conn.commit()
+    
+    click.echo(f"✓ 已删除分组 '{name}'，{len(children)} 个子服务变为独立")
+
+
+@cli.group()
+def service():
+    """服务管理"""
+    pass
+
+
+@service.command('set-parent')
+@click.argument('service_name')
+@click.argument('parent_name')
+def service_set_parent(service_name, parent_name):
+    """将服务挂到分组下"""
+    db = Database(db_path)
+    
+    services = [s for s in db.get_all_services() if s.name == service_name and not s.is_group]
+    if not services:
+        click.echo(f"服务 '{service_name}' 不存在")
+        return
+    
+    groups = [s for s in db.get_all_services() if s.name == parent_name and s.is_group]
+    if not groups:
+        click.echo(f"分组 '{parent_name}' 不存在")
+        return
+    
+    db.set_parent(services[0].id, groups[0].id)
+    click.echo(f"✓ 已将服务 '{service_name}' 挂到分组 '{parent_name}' 下")
+
+
+@service.command('unparent')
+@click.argument('service_name')
+def service_unparent(service_name):
+    """将服务移出分组"""
+    db = Database(db_path)
+    
+    services = [s for s in db.get_all_services() if s.name == service_name and not s.is_group]
+    if not services:
+        click.echo(f"服务 '{service_name}' 不存在")
+        return
+    
+    db.set_parent(services[0].id, None)
+    click.echo(f"✓ 已将服务 '{service_name}' 移出分组")
+
+
+@service.command('tree')
+def service_tree():
+    """树状展示所有服务"""
+    db = Database(db_path)
+    tree = db.get_tree()
+    
+    def format_usage(service_id):
+        """格式化使用量"""
+        usage = db.get_period_usage(service_id)
+        if not usage:
+            return "N/A"
+        total_gb = usage.total_bytes / (1024**3)
+        # Groups don't have quota
+        svc = [s for s in db.get_all_services() if s.id == service_id][0]
+        if svc.is_group:
+            return f"{total_gb:.1f} GB"
+        quota_gb = svc.quota_bytes / (1024**3)
+        pct = (usage.total_bytes / svc.quota_bytes * 100) if svc.quota_bytes > 0 else 0
+        return f"{total_gb:.1f} GB / {quota_gb:.0f} GB   {pct:.1f}%"
+    
+    def print_node(node, prefix="", is_last=True):
+        """递归打印树节点"""
+        connector = "└── " if is_last else "├── "
+        ports_str = f"({','.join(map(str, node['ports']))})" if node['ports'] else ""
+        
+        if node['is_group']:
+            # 分组：显示汇总
+            children_ids = [c['id'] for c in node.get('children', [])]
+            total_bytes = sum([db.get_period_usage(cid).total_bytes if db.get_period_usage(cid) else 0 for cid in children_ids])
+            total_quota = sum([([s for s in db.get_all_services() if s.id == cid][0].quota_bytes if [s for s in db.get_all_services() if s.id == cid] else 0) for cid in children_ids])
+            total_gb = total_bytes / (1024**3)
+            quota_gb = total_quota / (1024**3)
+            pct = (total_bytes / total_quota * 100) if total_quota > 0 else 0
+            usage_str = f"{total_gb:.1f} GB / {quota_gb:.0f} GB   {pct:.1f}%"
+            click.echo(f"{prefix}{connector}{node['name']}")
+            click.echo(f"{prefix}{'    ' if is_last else '│   '}└── 合计: {usage_str}")
+        else:
+            usage_str = format_usage(node['id'])
+            click.echo(f"{prefix}{connector}{node['name']} {ports_str}    {usage_str}")
+        
+        children = node.get('children')
+        if children:
+            extension = "    " if is_last else "│   "
+            for i, child in enumerate(children):
+                print_node(child, prefix + extension, i == len(children) - 1)
+    
+    if not tree:
+        click.echo("暂无服务")
+        return
+    
+    for i, node in enumerate(tree):
+        print_node(node, "", i == len(tree) - 1)
+
+
 if __name__ == '__main__':
     cli()
