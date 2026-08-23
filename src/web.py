@@ -125,6 +125,19 @@ async def get_status():
         
         used_gb = usage.total_bytes / (1024**3)
         
+        # 获取当前周期的入站/出站流量
+        cursor = db.conn.execute(
+            '''SELECT COALESCE(SUM(bytes_in), 0) as in_bytes, 
+                      COALESCE(SUM(bytes_out), 0) as out_bytes
+               FROM traffic_stats 
+               WHERE service_id = ? 
+               AND timestamp >= ? AND timestamp < ?''',
+            (node['id'], usage.period_start, usage.period_end)
+        )
+        row = cursor.fetchone()
+        in_gb = row['in_bytes'] / (1024**3) if row else 0
+        out_gb = row['out_bytes'] / (1024**3) if row else 0
+        
         if node['is_group']:
             # 分组节点：汇总子节点
             children_data = []
