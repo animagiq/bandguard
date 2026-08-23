@@ -63,6 +63,75 @@ traffic-ctl history --service hy2 --days 7
 - Server酱微信推送 + SMTP 邮件告警
 - Docker 容器化部署
 
+## 故障排查
+
+### 容器无法启动
+
+检查日志：
+```bash
+docker logs traffic-monitor
+```
+
+常见问题：
+- **权限不足：** 确保容器有 `NET_ADMIN` 权限（docker-compose.yml 已配置）
+- **端口冲突：** 检查宿主机端口是否被占用
+
+### 流量统计不准确
+
+1. 检查 iptables 规则是否生效：
+```bash
+docker exec traffic-monitor iptables -L -nvx
+```
+
+2. 对比 Vultr API 数据：
+```bash
+docker exec traffic-monitor traffic-ctl status
+```
+
+差异通常在 1-3% 范围内（协议层级差异）
+
+### 告警未收到
+
+测试通知渠道：
+```bash
+docker exec traffic-monitor traffic-ctl test-alert --channel serverchan
+docker exec traffic-monitor traffic-ctl test-alert --channel email
+```
+
+检查配置：
+```bash
+docker exec traffic-monitor traffic-ctl config
+```
+
+### 重置数据库（危险）
+
+```bash
+docker-compose down
+docker volume rm vpc-traffic-monitor_traffic-data
+docker-compose up -d
+docker exec -it traffic-monitor traffic-ctl init
+```
+
+## 开发
+
+### 本地测试
+
+```bash
+# 安装依赖
+pip install -r requirements.txt
+
+# 运行测试
+python tests/test_database.py
+python tests/test_iptables.py  # 需要 root
+python tests/test_alerter.py
+```
+
+### 构建镜像
+
+```bash
+docker build -t vpc-traffic-monitor:test .
+```
+
 ## License
 
 MIT

@@ -1,45 +1,71 @@
 #!/bin/bash
 set -e
 
-echo "=== VPC Traffic Monitor 部署脚本 ==="
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+echo -e "${GREEN}=== VPC Traffic Monitor 部署脚本 ===${NC}\n"
+
+# 检测操作系统
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    OS=$ID
+else
+    echo -e "${RED}无法检测操作系统${NC}"
+    exit 1
+fi
 
 # 检测 Docker
 if ! command -v docker &> /dev/null; then
-    echo "Docker 未安装，开始安装..."
-    curl -fsSL https://get.docker.com -o get-docker.sh
-    sh get-docker.sh
-    rm get-docker.sh
-    systemctl enable docker
-    systemctl start docker
-    echo "Docker 安装完成"
+    echo -e "${YELLOW}Docker 未安装，开始安装...${NC}"
+
+    if [ "$OS" = "ubuntu" ] || [ "$OS" = "debian" ]; then
+        curl -fsSL https://get.docker.com -o get-docker.sh
+        sh get-docker.sh
+        rm get-docker.sh
+        systemctl enable docker
+        systemctl start docker
+        echo -e "${GREEN}Docker 安装完成${NC}"
+    else
+        echo -e "${RED}不支持的操作系统: $OS${NC}"
+        exit 1
+    fi
 else
-    echo "Docker 已安装: $(docker --version)"
+    echo -e "${GREEN}Docker 已安装: $(docker --version)${NC}"
 fi
 
 # 检测 Docker Compose
 if ! command -v docker-compose &> /dev/null; then
-    echo "安装 Docker Compose..."
+    echo -e "${YELLOW}安装 Docker Compose...${NC}"
     apt-get update && apt-get install -y docker-compose
+    echo -e "${GREEN}Docker Compose 安装完成${NC}"
 fi
 
-# 获取版本号（从 git tag 或使用 dev）
+# 获取版本号
 VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
-echo "当前版本: $VERSION"
+echo -e "\n${GREEN}当前版本: $VERSION${NC}\n"
 
 # 构建镜像
-echo "构建 Docker 镜像..."
-docker build -t vpc-traffic-monitor:$VERSION .
+echo -e "${YELLOW}构建 Docker 镜像...${NC}"
+docker build -t vpc-traffic-monitor:$VERSION . || {
+    echo -e "${RED}镜像构建失败${NC}"
+    exit 1
+}
 docker tag vpc-traffic-monitor:$VERSION vpc-traffic-monitor:latest
+echo -e "${GREEN}✓ 镜像构建完成${NC}\n"
 
-# 清理旧镜像（保留最近 3 个版本，按版本号排序）
-echo "清理旧镜像..."
-# 获取所有版本标签（排除 latest 和当前版本），按时间倒序
-OLD_IMAGES=$(docker images vpc-traffic-monitor --format "{{.Tag}}" | \
+# 清理旧镜像（保留最近 3 个版本，按版本号倒序）
+echo -e "${YELLOW}清理旧镜像（保留最近 3 个版本）...${NC}"
+# 排除 latest 和当前版本，按版本号倒序排序后跳过前 3 个
+IMAGES_TO_DELETE=$(docker images vpc-traffic-monitor --format "{{.Tag}}" | \
     grep -v "^latest$" | grep -v "^$VERSION$" | sort -r | tail -n +4)
-if [ -n "$OLD_IMAGES" ]; then
-    echo "$OLD_IMAGES" | while read tag; do
+
+if [ -n "$IMAGES_TO_DELETE" ]; then
+    echo "$IMAGES_TO_DELETE" | while read tag; do
         docker rmi vpc-traffic-monitor:$tag 2>/dev/null && \
-            echo "✓ 删除旧镜像: $tag" || true
+            echo -e "${GREEN}删除旧镜像: $tag${NC}" || true
     done
 else
     echo "无需清理"
@@ -47,12 +73,12 @@ fi
 
 # 停止旧容器
 if [ "$(docker ps -aq -f name=traffic-monitor)" ]; then
-    echo "停止旧容器..."
+    echo -e "\n${YELLOW}停止旧容器...${NC}"
     docker-compose down
 fi
 
 # 启动容器
-echo "启动容器..."
+echo -e "\n${YELLOW}启动容器...${NC}"
 docker-compose up -d
 
 # 等待容器启动
@@ -60,16 +86,24 @@ sleep 3
 
 # 检查状态
 if docker ps | grep -q traffic-monitor; then
-    echo "✓ 部署成功！"
-    echo ""
-    echo "下一步："
-    echo "1. 运行初始化配置："
-    echo "   docker exec -it traffic-monitor traffic-ctl init"
-    echo ""
-    echo "2. 查看运行状态："
-    echo "   docker exec -it traffic-monitor traffic-ctl status"
+    echo -e "\n${GREEN}✓ 部署成功！${NC}\n"
+
+    # 检查是否已初始化
+    INITIALIZED=$(docker exec traffic-monitor traffic-ctl config --get initialized 2>/dev/null || echo "0")
+
+    if [ "$INITIALIZED" != "1" ]; then
+        echo -e "${YELLOW}首次部署，需要初始化配置：${NC}"
+        echo -e "   ${GREEN}docker exec -it traffic-monitor traffic-ctl init${NC}\n"
+    else
+        echo -e "${GREEN}系统已初始化，查看状态：${NC}"
+        echo -e "   ${GREEN}docker exec -it traffic-monitor traffic-ctl status${NC}\n"
+    fi
+
+    echo "查看日志："
+    echo -e "   ${GREEN}docker logs -f traffic-monitor${NC}"
 else
-    echo "✗ 容器启动失败，查看日志："
+    echo -e "\n${RED}✗ 容器启动失败${NC}"
+    echo "查看错误日志："
     echo "   docker logs traffic-monitor"
     exit 1
 fi
