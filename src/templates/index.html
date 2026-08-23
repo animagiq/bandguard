@@ -578,7 +578,29 @@
         }
 
         // Config modal
-        function showConfigModal() {
+        async function showConfigModal() {
+            // Load current config
+            try {
+                const res = await fetch('/api/config');
+                const config = await res.json();
+                
+                // Fill form with current values (empty if null)
+                document.getElementById('vultrApiKey').value = config.vultr_api_key || '';
+                document.getElementById('vultrInstanceId').value = config.vultr_instance_id || '';
+                document.getElementById('serverchanKey').value = config.serverchan_key || '';
+                document.getElementById('resetDay').value = config.reset_day || '1';
+                
+                // Add placeholder hints for masked values
+                if (config.vultr_api_key && config.vultr_api_key.includes('***')) {
+                    document.getElementById('vultrApiKey').placeholder = '保留原值（已配置）';
+                }
+                if (config.serverchan_key && config.serverchan_key.includes('***')) {
+                    document.getElementById('serverchanKey').placeholder = '保留原值（已配置）';
+                }
+            } catch (e) {
+                console.error('Failed to load config:', e);
+            }
+            
             document.getElementById('configModal').classList.add('active');
         }
 
@@ -594,6 +616,13 @@
                 serverchan_key: document.getElementById('serverchanKey').value || undefined,
                 reset_day: parseInt(document.getElementById('resetDay').value) || undefined
             };
+            
+            // Remove undefined values (don't send empty strings for masked fields)
+            Object.keys(data).forEach(key => {
+                if (data[key] === undefined || data[key] === '') {
+                    delete data[key];
+                }
+            });
 
             try {
                 await fetch('/api/config', {
