@@ -16,6 +16,10 @@ COPY src/ ./src/
 # 创建数据目录
 RUN mkdir -p /data
 
+# 创建 CLI 别名脚本
+RUN echo '#!/bin/sh\npython -m src.main "$@"' > /usr/local/bin/traffic-ctl && \
+    chmod +x /usr/local/bin/traffic-ctl
+
 # 设置入口点
 ENTRYPOINT ["python", "-m", "src.main"]
 CMD ["daemon"]
