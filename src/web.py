@@ -174,7 +174,7 @@ async def get_status():
         )
         row = cursor.fetchone()
         if row:
-            vultr_total = row['total_bytes_in'] + row['total_bytes_out']
+            vultr_total = row['total_bytes_out']  # Vultr 只计费出站
     except Exception as e:
         print(f'Failed to fetch Vultr stats: {e}')
     

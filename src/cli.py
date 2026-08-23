@@ -1,3 +1,5 @@
+import os
+
 import click
 from tabulate import tabulate
 
@@ -6,8 +8,9 @@ from src.iptables_manager import IptablesManager
 from src.alerter import Alerter
 
 # 测试钩子：命令统一读取该变量作为数据库路径。
-# 默认指向容器内数据目录；测试可将其替换为临时路径（无需修改 Database 类）。
-db_path = '/data/traffic_monitor.db'
+# 默认与运行环境一致（DB_PATH 环境变量，容器内 /data/traffic.db）；
+# 测试可将其替换为临时路径（无需修改 Database 类）。
+db_path = os.environ.get('DB_PATH', '/data/traffic.db')
 
 # 配置键含以下子串（不区分大小写）时视为敏感项，禁止回显明文
 _SECRET_KEY_PARTS = ('key', 'pass', 'token')

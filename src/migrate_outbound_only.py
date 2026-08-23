@@ -10,6 +10,7 @@
     python src/migrate_outbound_only.py [--db-path /path/to/db]
 """
 
+import os
 import sys
 import argparse
 from pathlib import Path
@@ -49,10 +50,8 @@ def migrate(db_path: str):
         print("\n迁移完成！")
         print("\n注意事项：")
         print("1. traffic_stats 表保留了历史数据，但 bytes_in 列将不再使用")
-        print("2. 需要手动解除 iptables 封禁规则（如有）：")
-        print("   docker-compose exec monitor traffic-ctl unblock <service>")
-        print("3. 重启守护进程生效：")
-        print("   docker-compose restart monitor")
+        print("2. 重启守护进程生效（启动时会自动协调 iptables 封禁状态）：")
+        print("   sudo docker compose restart traffic-monitor")
         
     except Exception as e:
         print(f"✗ 迁移失败: {e}")
@@ -66,8 +65,8 @@ def main():
     parser = argparse.ArgumentParser(description='迁移数据库为只统计出站流量')
     parser.add_argument(
         '--db-path',
-        default='/data/traffic_monitor.db',
-        help='数据库路径（默认: /data/traffic_monitor.db）'
+        default=os.environ.get('DB_PATH', '/data/traffic.db'),
+        help='数据库路径（默认: DB_PATH 环境变量或 /data/traffic.db）'
     )
     parser.add_argument(
         '--confirm',

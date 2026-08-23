@@ -73,6 +73,25 @@ else
     exit 1
 fi
 
+# 6. 检查数据库路径一致性
+echo ""
+echo "6. 检查数据库路径统一为 DB_PATH/traffic.db"
+if grep -q "db_path = os.environ.get('DB_PATH', '/data/traffic.db')" src/cli.py && \
+   grep -q "db_path: str = '/data/traffic.db'" src/database.py && \
+   grep -q "os.environ.get('DB_PATH', '/data/traffic.db')" src/migrate_outbound_only.py; then
+    echo "   ✓ cli/database/migrate 路径一致"
+else
+    echo "   ✗ 存在不一致的数据库路径"
+    exit 1
+fi
+
+if grep -q "vultr_total = row\['total_bytes_out'\]  # Vultr 只计费出站" src/web.py; then
+    echo "   ✓ web.py Vultr 对比只统计出站"
+else
+    echo "   ✗ web.py 仍合计入站+出站"
+    exit 1
+fi
+
 echo ""
 echo "=== 所有检查通过 ==="
 echo ""

@@ -70,7 +70,7 @@ def safe_period_end(start_date, reset_day: int):
 
 
 class Database:
-    def __init__(self, db_path: str = '/data/traffic_monitor.db'):
+    def __init__(self, db_path: str = '/data/traffic.db'):
         self.db_path = db_path
         self.conn: Optional[sqlite3.Connection] = None
         self._connect()
