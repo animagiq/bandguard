@@ -87,12 +87,12 @@ fi
 # 停止旧容器
 if [ "$(docker ps -aq -f name=traffic-monitor)" ]; then
     echo -e "\n${YELLOW}停止旧容器...${NC}"
-    docker-compose down
+    docker compose down
 fi
 
 # 启动容器
 echo -e "\n${YELLOW}启动容器...${NC}"
-docker-compose up -d
+docker compose up -d
 
 # 等待容器启动
 sleep 3
