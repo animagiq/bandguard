@@ -690,12 +690,44 @@
         });
 
         // Add service modal
+        let editingService = null;
+
         function showAddServiceModal() {
+            editingService = null;
+            document.getElementById('serviceName').disabled = false;
+            document.getElementById('addServiceModalTitle').textContent = '添加服务';
+            document.getElementById('addServiceForm').reset();
             document.getElementById('addServiceModal').classList.add('active');
         }
 
         function hideAddServiceModal() {
+            editingService = null;
+            document.getElementById('serviceName').disabled = false;
             document.getElementById('addServiceModal').classList.remove('active');
+        }
+
+        function editService(name) {
+            const service = statusData.services.find(s => s.name === name);
+            if (!service) {
+                alert('找不到服务');
+                return;
+            }
+
+            editingService = name;
+            document.getElementById('serviceName').value = service.name;
+            document.getElementById('serviceName').disabled = true;
+            document.getElementById('servicePorts').value = service.ports.join(', ');
+            document.getElementById('serviceQuota').value = service.quota_gb;
+            
+            const protocols = service.protocols;
+            if (protocols.length === 2 || protocols[0] === 'both') {
+                document.getElementById('serviceProtocols').value = 'both';
+            } else {
+                document.getElementById('serviceProtocols').value = protocols[0];
+            }
+
+            document.getElementById('addServiceModalTitle').textContent = '编辑服务';
+            document.getElementById('addServiceModal').classList.add('active');
         }
 
         document.getElementById('addServiceForm').addEventListener('submit', async (e) => {
