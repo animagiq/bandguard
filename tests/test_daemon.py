@@ -337,6 +337,38 @@ def test_collect_stats_isolates_per_service_failure():
     assert 'db' not in monitor.last_counters, '读取失败的服务不应建立基线'
 
 
+def test_check_quota_exception_does_not_stale_baseline():
+    """check_quota 抛异常（如非法阈值配置）后基线应已刷新，
+    下个周期按新基线计算增量，不重复记录本周期流量"""
+    svc = _make_service(1)
+    db = FakeDB([svc], config={}, usage={1: _make_usage(1)})
+    seq = iter([
+        _counter(1000, 2000),  # 基线
+        _counter(1500, 2500),  # +500/+500，check_quota 抛错被吞
+        _counter(1800, 3000),  # +300/+500，正常记录
+    ])
+    ipt = FakeIptables(counters={'web': seq})
+    monitor = _make_monitor(db, ipt)
+
+    # 模拟 check_quota 抛异常（评审发现：垃圾 alert_thresholds / DB 瞬时错误）
+    with patch.object(TrafficMonitor, 'check_quota',
+                      side_effect=ValueError('invalid alert_thresholds')):
+        monitor.collect_stats()  # 基线
+        monitor.collect_stats()  # 记录 (500,500)，check_quota 抛错被 per-service except 吞掉
+
+        assert monitor.last_counters['web'] == {'in': 1500, 'out': 2500, 'total': 4000}, \
+            'check_quota 抛异常前基线应已更新，否则下个周期会重复计数'
+
+    monitor.collect_stats()  # 恢复正常 → 正确记录 (300, 500)
+
+    assert db.traffic_records == [(1, 500, 500), (1, 300, 500)], \
+        f'check_quota 失败不应导致下个周期双计: {db.traffic_records}'
+    assert db.usage_updates == [(1, 1000), (1, 800)], \
+        f'period_usage 不应因 check_quota 失败而重复累加: {db.usage_updates}'
+    assert db.usage[1].total_bytes == 1800
+    assert monitor.last_counters['web'] == {'in': 1800, 'out': 3000, 'total': 4800}
+
+
 def test_sync_vultr_data_writes_stats():
     """sync_vultr_data 写入 vultr_stats（含当月账单周期）并提交"""
     svc = _make_service(1)
@@ -397,6 +429,7 @@ def _run_all():
         test_threshold_alerts_fire_once_with_dedup,
         test_start_exits_on_uninitialized_db,
         test_collect_stats_isolates_per_service_failure,
+        test_check_quota_exception_does_not_stale_baseline,
         test_sync_vultr_data_writes_stats,
         test_sync_vultr_data_no_client_noop,
         test_sync_vultr_data_error_handled,

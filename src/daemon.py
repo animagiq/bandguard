@@ -133,14 +133,19 @@ class TrafficMonitor:
                     )
                     self.db.update_period_usage(service.id, total_delta)
 
-                    # 检查配额
-                    self.check_quota(service)
-
+                # 先更新基线、再检查配额：check_quota 内部抛异常时
+                # （阈值配置非法、数据库瞬时错误、block_service 运行时
+                # 错误），下个周期仍以新基线计算增量，不会把本周期流量
+                # 重复计入（避免跨周期累计双计）
                 self.last_counters[service.name] = {
                     'in': current_in,
                     'out': current_out,
                     'total': current,
                 }
+
+                if total_delta > 0:
+                    # 检查配额
+                    self.check_quota(service)
 
             except Exception as e:
                 print(f"采集 {service.name} 流量失败: {e}")
