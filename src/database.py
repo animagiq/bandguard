@@ -1,5 +1,6 @@
 import sqlite3
 import json
+import calendar
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
@@ -22,6 +23,49 @@ class PeriodUsage:
     total_bytes: int
     is_blocked: bool
     blocked_at: Optional[str]
+
+
+def safe_reset_day(value):
+    """读取并校验 reset_day 配置值
+
+    None / 非数字 → 回退到 1 并打印警告；<= 0 → 1；> 31 → 钳制到 31。
+    保证后续 datetime(y, m, reset_day) 永不因越界日而抛 ValueError。
+    """
+    if value is None:
+        return 1
+    try:
+        reset_day = int(value)
+    except (TypeError, ValueError):
+        print(f"警告: 非法 reset_day 配置 '{value}'，回退到 1")
+        return 1
+    if reset_day <= 0:
+        print(f"警告: reset_day 配置 '{value}' 不在有效范围（应为 1-31），回退到 1")
+        return 1
+    if reset_day > 31:
+        print(f"警告: reset_day 配置 '{value}' 超出范围（应为 1-31），钳制到 31")
+        return 31
+    return reset_day
+
+
+def safe_period_end(start_date, reset_day: int):
+    """计算周期结束日期（带天数钳制）
+
+    reset_day 超过目标月份天数时钳制到该月最后一天
+    （如 reset_day=31、目标月为 2 月 → 28/29 日），避免 ValueError。
+    与 daemon._safe_period_end 语义一致（由 daemon 委托调用，避免漂移）。
+    """
+    if start_date.day < reset_day:
+        end_month = start_date.month
+        end_year = start_date.year
+    else:
+        end_month = start_date.month + 1
+        end_year = start_date.year
+        if end_month > 12:
+            end_month = 1
+            end_year += 1
+
+    days_in_month = calendar.monthrange(end_year, end_month)[1]
+    return datetime(end_year, end_month, min(reset_day, days_in_month)).date()
 
 
 class Database:
@@ -90,7 +134,7 @@ class Database:
         
         # 初始化周期使用记录
         today = datetime.now().date()
-        reset_day = int(self.get_config('reset_day') or '1')
+        reset_day = safe_reset_day(self.get_config('reset_day'))
         period_end = self._calculate_period_end(today, reset_day)
         
         self.conn.execute(
@@ -102,18 +146,8 @@ class Database:
         self.conn.commit()
     
     def _calculate_period_end(self, start_date, reset_day: int):
-        """计算周期结束日期"""
-        if start_date.day < reset_day:
-            end_month = start_date.month
-            end_year = start_date.year
-        else:
-            end_month = start_date.month + 1
-            end_year = start_date.year
-            if end_month > 12:
-                end_month = 1
-                end_year += 1
-        
-        return datetime(end_year, end_month, reset_day).date()
+        """计算周期结束日期（委托模块级 safe_period_end，带天数钳制）"""
+        return safe_period_end(start_date, reset_day)
     
     def get_period_usage(self, service_id: int) -> Optional[PeriodUsage]:
         """获取服务的当前周期使用情况"""
