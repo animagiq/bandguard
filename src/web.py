@@ -91,14 +91,14 @@ async def get_status():
     for service in db.get_all_services():
         usage = db.get_period_usage(service.name)
         if usage:
-            quota_gb = service['quota'] / (1024**3)
+            quota_gb = service.quota_bytes / (1024**3)
             used_gb = usage['bytes_total'] / (1024**3)
             percentage = (used_gb / quota_gb * 100) if quota_gb > 0 else 0
             
             services_data.append({
-                "name": service['name'],
-                "ports": [int(p) for p in service['ports'].split(',')],
-                "protocols": service['protocols'].split(','),
+                "name": service.name,
+                "ports": service.ports,
+                "protocols": [service.protocols] if isinstance(service.protocols, str) else service.protocols,
                 "quota_gb": round(quota_gb, 1),
                 "used_gb": round(used_gb, 1),
                 "in_gb": round(usage['bytes_in'] / (1024**3), 1),
