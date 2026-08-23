@@ -573,7 +573,18 @@
             if (statusData.vultr_total_gb !== undefined) {
                 const vultrEl = document.getElementById('vultrStats');
                 if (vultrEl) {
-                    vultrEl.textContent = `Vultr 官方统计: ${statusData.vultr_total_gb} GB`;
+                    let vultrText = `Vultr 官方统计: ${statusData.vultr_total_gb} GB`;
+                    
+                    // Add billing info if available
+                    if (statusData.vultr_pending_charges !== undefined) {
+                        vultrText += ` | 本月费用: $${statusData.vultr_pending_charges.toFixed(2)}`;
+                    }
+                    if (statusData.vultr_balance !== undefined) {
+                        const balanceColor = statusData.vultr_balance < 0 ? '#ef4444' : 'inherit';
+                        vultrText += ` | 余额: <span style="color: ${balanceColor}">$${statusData.vultr_balance.toFixed(2)}</span>`;
+                    }
+                    
+                    vultrEl.innerHTML = vultrText;
                     vultrEl.style.display = 'block';
                 }
             }

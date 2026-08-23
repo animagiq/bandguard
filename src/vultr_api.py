@@ -15,6 +15,35 @@ class VultrAPIClient:
             'Authorization': f'Bearer {api_key}'
         }
     
+    def fetch_account_info(self) -> Optional[Dict]:
+        """获取账户信息（余额、待结算费用）
+        
+        Returns:
+            {
+                'balance': float,  # 账户余额（负数表示欠费）
+                'pending_charges': float  # 待结算费用
+            }
+            或 None（如果请求失败）
+        """
+        try:
+            url = f'{self.BASE_URL}/account'
+            resp = requests.get(url, headers=self.headers, timeout=10)
+            resp.raise_for_status()
+            
+            data = resp.json()
+            if 'account' in data:
+                account = data['account']
+                return {
+                    'balance': account.get('balance', 0.0),
+                    'pending_charges': account.get('pending_charges', 0.0)
+                }
+            
+            return None
+        
+        except Exception as e:
+            print(f"Vultr API 请求失败: {e}")
+            return None
+    
     def fetch_bandwidth(self) -> Optional[Dict[str, int]]:
         """获取当前月份的带宽使用情况
         

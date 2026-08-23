@@ -329,6 +329,7 @@ class TrafficMonitor:
             return
 
         try:
+            # 获取带宽统计
             data = self.vultr_client.fetch_bandwidth()
             if data:
                 current_month = datetime.now().strftime('%Y-%m')
@@ -340,6 +341,14 @@ class TrafficMonitor:
                 )
                 self.db.conn.commit()
                 print(f"Vultr 数据同步成功: {data['total_bytes'] / (1024**3):.2f} GB")
+            
+            # 获取账户信息（余额、待结算费用）
+            account_info = self.vultr_client.fetch_account_info()
+            if account_info:
+                # 存储到 config 表作为最新值
+                self.db.set_config('vultr_balance', str(account_info['balance']))
+                self.db.set_config('vultr_pending_charges', str(account_info['pending_charges']))
+                print(f"Vultr 账户: 余额 ${account_info['balance']:.2f}, 待结算 ${account_info['pending_charges']:.2f}")
 
         except Exception as e:
             print(f"Vultr 数据同步失败: {e}")
