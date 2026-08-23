@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  traffic-monitor:
+    container_name: traffic-monitor
+    image: vpc-traffic-monitor:latest
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - traffic-data:/data
+    environment:
+      - TZ=Asia/Shanghai
+    command: daemon
+
+volumes:
+  traffic-data:
+    driver: local
