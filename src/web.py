@@ -178,6 +178,8 @@ async def get_status():
                 "protocols": [node['protocols']] if isinstance(node['protocols'], str) else node['protocols'],
                 "quota_gb": round(quota_gb, 1),
                 "used_gb": round(used_gb, 2),
+                "in_gb": round(in_gb, 2),
+                "out_gb": round(out_gb, 2),
                 "used_display": used_display,
                 "percentage": round(percentage, 1),
                 "is_blocked": usage.is_blocked,
