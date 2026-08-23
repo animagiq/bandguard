@@ -358,5 +358,33 @@ def test_alert(channel):
     alerter.test_notification(channel)
 
 
+@cli.command()
+@click.option('--interval', '-i', default=1.0, type=float, help='刷新间隔（秒）')
+@click.option('--port', '-p', 'extra_ports', multiple=True,
+              help='额外临时监控端口，格式: 8080 或 8080/tcp 或 53/udp')
+def live(interval, extra_ports):
+    """实时流量 TUI：按服务展示入/出站速率与累计（Ctrl+C 退出并自动清理）"""
+    from src.live_tui import LiveWatcher
+
+    db = Database(db_path)
+    specs = [(s.name, s.ports, s.protocols) for s in db.get_all_services()]
+
+    for i, spec in enumerate(extra_ports, 1):
+        if '/' in spec:
+            port_s, proto = spec.split('/', 1)
+            proto = proto.lower()
+            if proto not in ('tcp', 'udp'):
+                raise click.BadParameter(f'协议必须是 tcp 或 udp: {spec}')
+        else:
+            port_s, proto = spec, 'both'
+        specs.append((f'extra{i}', [int(port_s)], proto))
+
+    if not specs:
+        click.echo('没有可监控的服务，请先运行 init 或用 --port 指定端口')
+        return
+
+    LiveWatcher(specs, interval).run()
+
+
 if __name__ == '__main__':
     cli()
