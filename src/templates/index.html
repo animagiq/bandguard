@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Traffic Monitor</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-dark: #0a0e14;
+            --panel: #141920;
+            --border: #1f2937;
+            --text: #e5e7eb;
+            --text-dim: #6b7280;
+            --accent: #3b82f6;
+            --warn: #f59e0b;
+            --danger: #ef4444;
+            --success: #10b981;
+            --hy2: #8b5cf6;
+            --nginx: #06b6d4;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text);
+            line-height: 1.5;
+        }
+
+        .mono {
+            font-family: 'JetBrains Mono', 'Menlo', 'Monaco', monospace;
+        }
+
+        /* Top bar */
+        .topbar {
+            background: var(--panel);
+            border-bottom: 1px solid var(--border);
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .topbar h1 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            letter-spacing: -0.025em;
+        }
+
+        .topbar .reset-info {
+            color: var(--text-dim);
+            font-size: 0.875rem;
+        }
+
+        /* Main container */
+        .container {
+            max-width: 1280px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        /* Overall progress bar */
+        .total-progress {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 0.5rem;
+            padding: 2rem;
+            margin-bottom: 2rem;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 3rem;
+            background: var(--border);
+            border-radius: 0.25rem;
+            overflow: hidden;
+            margin-bottom: 1rem;
+            position: relative;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: var(--accent);
+            transition: width 0.3s ease, background-color 0.3s ease;
+        }
+
+        .progress-fill.warn { background: var(--warn); }
+        .progress-fill.danger { background: var(--danger); }
+
+        .progress-label {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+        }
+
+        .progress-label .percentage {
+            font-size: 2rem;
+            font-weight: 700;
+        }
+
+        .progress-label .details {
+            color: var(--text-dim);
+            font-size: 1rem;
+        }
+
+        /* Service cards */
+        .services-grid {
+            display: grid;
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .service-card {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 0.5rem;
+            display: grid;
+            grid-template-columns: 4px 1fr auto;
+            overflow: hidden;
+            transition: border-color 0.2s;
+            cursor: pointer;
+        }
+
+        .service-card:hover {
+            border-color: var(--text-dim);
+        }
+
+        .service-card.blocked {
+            border-color: var(--danger);
+        }
+
+        .service-stripe {
+            width: 4px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .service-stripe::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            opacity: 0;
+            background: white;
+            animation: pulse 60s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 0; }
+            0.25% { opacity: 0.6; }
+            0.5% { opacity: 0; }
+        }
+
+        .service-stripe.hy2 { background: var(--hy2); }
+        .service-stripe.nginx { background: var(--nginx); }
+
+        .service-info {
+            padding: 1.5rem;
+        }
+
+        .service-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .service-name {
+            font-size: 1.125rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .service-status {
+            font-size: 0.75rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.25rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .service-status.blocked {
+            background: var(--danger);
+            color: white;
+        }
+
+        .service-status.active {
+            background: var(--success);
+            color: white;
+        }
+
+        .service-progress {
+            width: 100%;
+            height: 1.5rem;
+            background: var(--border);
+            border-radius: 0.25rem;
+            overflow: hidden;
+            margin-bottom: 0.75rem;
+        }
+
+        .service-stats {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.5rem;
+            font-size: 0.875rem;
+            color: var(--text-dim);
+        }
+
+        .service-actions {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            padding: 1.5rem;
+            border-left: 1px solid var(--border);
+        }
+
+        /* Buttons */
+        button {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.25rem;
+            cursor: pointer;
+            font-size: 0.875rem;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        button:hover {
+            background: var(--border);
+        }
+
+        button.primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: white;
+        }
+
+        button.primary:hover {
+            opacity: 0.9;
+        }
+
+        button.danger {
+            background: var(--danger);
+            border-color: var(--danger);
+            color: white;
+        }
+
+        button.danger:hover {
+            opacity: 0.9;
+        }
+
+        .add-service {
+            text-align: center;
+            padding: 2rem;
+        }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 4rem 2rem;
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 0.5rem;
+        }
+
+        .empty-state h2 {
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .empty-state p {
+            color: var(--text-dim);
+            margin-bottom: 2rem;
+        }
+
+        .empty-state .config-links {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            margin-top: 1rem;
+            font-size: 0.875rem;
+        }
+
+        .empty-state a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        .empty-state a:hover {
+            text-decoration: underline;
+        }
+
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 0.5rem;
+            width: 90%;
+            max-width: 500px;
+            padding: 2rem;
+        }
+
+        .modal-content h2 {
+            margin-bottom: 1.5rem;
+        }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-size: 0.875rem;
+            color: var(--text-dim);
+        }
+
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            background: var(--bg-dark);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 0.75rem;
+            border-radius: 0.25rem;
+            font-size: 0.875rem;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .form-group .help-text {
+            margin-top: 0.5rem;
+            font-size: 0.75rem;
+            color: var(--text-dim);
+        }
+
+        .form-actions {
+            display: flex;
+            gap: 0.5rem;
+            justify-content: flex-end;
+            margin-top: 2rem;
+        }
+
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="topbar">
+        <h1>traffic-monitor</h1>
+        <div class="reset-info" id="resetInfo">加载中...</div>
+    </div>
+
+    <div class="container">
+        <!-- Empty state (shown when not initialized) -->
+        <div id="emptyState" class="empty-state hidden">
+            <h2>开始配置</h2>
+            <p>配置 Vultr API 和通知渠道以开始监控</p>
+            <button class="primary" onclick="showConfigModal()">配置系统</button>
+            <div class="config-links">
+                <a href="https://my.vultr.com/settings/#settingsapi" target="_blank">获取 Vultr API Key</a>
+                <a href="https://sct.ftqq.com/sendkey" target="_blank">获取 Server酱 SendKey</a>
+            </div>
+        </div>
+
+        <!-- Total progress -->
+        <div id="totalProgress" class="total-progress hidden">
+            <div class="progress-bar">
+                <div class="progress-fill" id="totalProgressFill"></div>
+            </div>
+            <div class="progress-label">
+                <div>
+                    <span class="percentage mono" id="totalPercentage">0%</span>
+                </div>
+                <div class="details mono" id="totalDetails">0 / 100 GB</div>
+            </div>
+        </div>
+
+        <!-- Services grid -->
+        <div id="servicesGrid" class="services-grid hidden"></div>
+
+        <!-- Add service button -->
+        <div id="addServiceBtn" class="add-service hidden">
+            <button class="primary" onclick="showAddServiceModal()">+ 添加服务</button>
+        </div>
+    </div>
+
+    <!-- Config Modal -->
+    <div id="configModal" class="modal">
+        <div class="modal-content">
+            <h2>系统配置</h2>
+            <form id="configForm">
+                <div class="form-group">
+                    <label for="vultrApiKey">Vultr API Key</label>
+                    <input type="password" id="vultrApiKey" placeholder="输入 Vultr API Key">
+                    <div class="help-text">
+                        <a href="https://my.vultr.com/settings/#settingsapi" target="_blank">获取 API Key</a>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="vultrInstanceId">Vultr Instance ID</label>
+                    <input type="text" id="vultrInstanceId" placeholder="输入实例 ID">
+                </div>
+                <div class="form-group">
+                    <label for="serverchanKey">Server酱 SendKey</label>
+                    <input type="password" id="serverchanKey" placeholder="输入 SendKey">
+                    <div class="help-text">
+                        <a href="https://sct.ftqq.com/sendkey" target="_blank">获取 SendKey</a>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="resetDay">月度重置日（1-31）</label>
+                    <input type="number" id="resetDay" min="1" max="31" value="1">
+                </div>
+                <div class="form-actions">
+                    <button type="button" onclick="hideConfigModal()">取消</button>
+                    <button type="submit" class="primary">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Add Service Modal -->
+    <div id="addServiceModal" class="modal">
+        <div class="modal-content">
+            <h2>添加服务</h2>
+            <form id="addServiceForm">
+                <div class="form-group">
+                    <label for="serviceName">服务名称</label>
+                    <input type="text" id="serviceName" placeholder="例如: hy2, nginx" required>
+                </div>
+                <div class="form-group">
+                    <label for="servicePorts">端口（逗号分隔）</label>
+                    <input type="text" id="servicePorts" placeholder="例如: 443, 8080" required>
+                </div>
+                <div class="form-group">
+                    <label for="serviceProtocols">协议</label>
+                    <select id="serviceProtocols" required>
+                        <option value="both">TCP + UDP</option>
+                        <option value="tcp">仅 TCP</option>
+                        <option value="udp">仅 UDP</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="serviceQuota">配额 (GB)</label>
+                    <input type="number" id="serviceQuota" min="1" value="50" required>
+                </div>
+                <div class="form-actions">
+                    <button type="button" onclick="hideAddServiceModal()">取消</button>
+                    <button type="submit" class="primary">添加</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        let statusData = null;
+
+        // Load status on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            loadStatus();
+            setInterval(loadStatus, 5000); // Refresh every 5s
+        });
+
+        async function loadStatus() {
+            try {
+                const res = await fetch('/api/status');
+                statusData = await res.json();
+                renderStatus();
+            } catch (e) {
+                console.error('Failed to load status:', e);
+            }
+        }
+
+        function renderStatus() {
+            if (!statusData.initialized) {
+                document.getElementById('emptyState').classList.remove('hidden');
+                document.getElementById('totalProgress').classList.add('hidden');
+                document.getElementById('servicesGrid').classList.add('hidden');
+                document.getElementById('addServiceBtn').classList.add('hidden');
+                return;
+            }
+
+            document.getElementById('emptyState').classList.add('hidden');
+            document.getElementById('totalProgress').classList.remove('hidden');
+            document.getElementById('servicesGrid').classList.remove('hidden');
+            document.getElementById('addServiceBtn').classList.remove('hidden');
+
+            // Update reset info
+            if (statusData.days_until_reset !== null) {
+                document.getElementById('resetInfo').textContent = `月度重置: ${statusData.days_until_reset} 天`;
+            }
+
+            // Update total progress
+            const totalPct = statusData.total_percentage;
+            const fillEl = document.getElementById('totalProgressFill');
+            fillEl.style.width = `${Math.min(totalPct, 100)}%`;
+            fillEl.className = 'progress-fill';
+            if (totalPct >= 90) fillEl.classList.add('danger');
+            else if (totalPct >= 80) fillEl.classList.add('warn');
+
+            document.getElementById('totalPercentage').textContent = `${totalPct}%`;
+            document.getElementById('totalDetails').textContent = 
+                `${statusData.total_usage} / ${statusData.total_quota} GB`;
+
+            // Render services
+            const grid = document.getElementById('servicesGrid');
+            grid.innerHTML = statusData.services.map(s => {
+                const pct = s.percentage;
+                let fillClass = '';
+                if (pct >= 90) fillClass = 'danger';
+                else if (pct >= 80) fillClass = 'warn';
+
+                const statusBadge = s.is_blocked 
+                    ? '<span class="service-status blocked">已封禁</span>'
+                    : '<span class="service-status active">运行中</span>';
+
+                return `
+                    <div class="service-card ${s.is_blocked ? 'blocked' : ''}">
+                        <div class="service-stripe ${s.name}"></div>
+                        <div class="service-info">
+                            <div class="service-header">
+                                <div class="service-name">${s.name}</div>
+                                ${statusBadge}
+                            </div>
+                            <div class="service-progress">
+                                <div class="progress-fill ${fillClass}" style="width: ${Math.min(pct, 100)}%"></div>
+                            </div>
+                            <div class="service-stats">
+                                <div class="mono">${s.used_gb} / ${s.quota_gb} GB</div>
+                                <div>${pct}%</div>
+                                <div>入站: ${s.in_gb} GB</div>
+                                <div>出站: ${s.out_gb} GB</div>
+                            </div>
+                        </div>
+                        <div class="service-actions">
+                            ${s.is_blocked 
+                                ? `<button onclick="unblockService('${s.name}')">解封</button>`
+                                : `<button class="danger" onclick="blockService('${s.name}')">封禁</button>`
+                            }
+                            <button onclick="deleteService('${s.name}')">删除</button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Config modal
+        function showConfigModal() {
+            document.getElementById('configModal').classList.add('active');
+        }
+
+        function hideConfigModal() {
+            document.getElementById('configModal').classList.remove('active');
+        }
+
+        document.getElementById('configForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const data = {
+                vultr_api_key: document.getElementById('vultrApiKey').value || undefined,
+                vultr_instance_id: document.getElementById('vultrInstanceId').value || undefined,
+                serverchan_key: document.getElementById('serverchanKey').value || undefined,
+                reset_day: parseInt(document.getElementById('resetDay').value) || undefined
+            };
+
+            try {
+                await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                hideConfigModal();
+                loadStatus();
+            } catch (e) {
+                alert('配置保存失败: ' + e.message);
+            }
+        });
+
+        // Add service modal
+        function showAddServiceModal() {
+            document.getElementById('addServiceModal').classList.add('active');
+        }
+
+        function hideAddServiceModal() {
+            document.getElementById('addServiceModal').classList.remove('active');
+        }
+
+        document.getElementById('addServiceForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const portsStr = document.getElementById('servicePorts').value;
+            const ports = portsStr.split(',').map(p => parseInt(p.trim())).filter(p => !isNaN(p));
+            
+            const protocol = document.getElementById('serviceProtocols').value;
+            const protocols = protocol === 'both' ? ['tcp', 'udp'] : [protocol];
+
+            const data = {
+                name: document.getElementById('serviceName').value,
+                ports: ports,
+                protocols: protocols,
+                quota: parseInt(document.getElementById('serviceQuota').value)
+            };
+
+            try {
+                const res = await fetch('/api/services', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.detail || '添加失败');
+                }
+
+                hideAddServiceModal();
+                document.getElementById('addServiceForm').reset();
+                loadStatus();
+            } catch (e) {
+                alert('添加服务失败: ' + e.message);
+            }
+        });
+
+        // Service actions
+        async function blockService(name) {
+            if (!confirm(`确定封禁服务 ${name}？`)) return;
+            
+            try {
+                await fetch(`/api/services/${name}/action`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'block' })
+                });
+                loadStatus();
+            } catch (e) {
+                alert('封禁失败: ' + e.message);
+            }
+        }
+
+        async function unblockService(name) {
+            try {
+                await fetch(`/api/services/${name}/action`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'unblock' })
+                });
+                loadStatus();
+            } catch (e) {
+                alert('解封失败: ' + e.message);
+            }
+        }
+
+        async function deleteService(name) {
+            if (!confirm(`确定删除服务 ${name}？此操作不可恢复。`)) return;
+            
+            try {
+                await fetch(`/api/services/${name}`, {
+                    method: 'DELETE'
+                });
+                loadStatus();
+            } catch (e) {
+                alert('删除失败: ' + e.message);
+            }
+        }
+    </script>
+</body>
+</html>

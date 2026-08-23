@@ -8,11 +8,14 @@ services:
     network_mode: host
     cap_add:
       - NET_ADMIN
+    ports:
+      - "8080:8080"
     volumes:
       - traffic-data:/data
     environment:
       - TZ=Asia/Shanghai
-    command: daemon
+      - DB_PATH=/data/traffic.db
+    command: python3 -m src.main_web
 
 volumes:
   traffic-data:
